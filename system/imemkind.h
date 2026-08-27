@@ -79,6 +79,28 @@ ilong ib_string_save(const ib_string *out, const char *filename);
 
 
 //---------------------------------------------------------------------
+// managed user object
+//---------------------------------------------------------------------
+struct ib_managed;
+typedef struct ib_managed ib_managed;
+
+// create a new managed object container
+ib_managed *ib_managed_new(void);
+
+// delete the managed object container and all installed objects
+void ib_managed_delete(ib_managed *managed);
+
+// query managed user object by key, returns NULL if not found
+void *ib_managed_query(ib_managed *managed, const char *key);
+
+// install managed user object, the optional cleanup will be called 
+// reversely when deleting the container. if obj is NULL existing obj 
+// will be removed.
+int ib_managed_install(ib_managed *managed, const char *key, void *obj,
+		void (*cleanup)(void *obj));
+
+
+//---------------------------------------------------------------------
 // CAsyncReader - read data from stream with various modes
 //---------------------------------------------------------------------
 struct CAsyncReader;

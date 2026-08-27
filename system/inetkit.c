@@ -1523,7 +1523,9 @@ void async_stream_graceful(CAsyncStream *stream, int timeout_ms)
 			return;
 		}
 		async_timer_init(timer, async_stream_graceful_timer);
-		async_timer_start(stream->loop, timer, (IUINT32)timeout_ms, 0);
+		// repeat=1: fire once then stop by itself (repeat<=0 would
+		// mean infinite repeat)
+		async_timer_start(stream->loop, timer, (IUINT32)timeout_ms, 1);
 		timer->user = stream;
 		stream->user = timer;
 		stream->callback = async_stream_graceful_cb;

@@ -11,6 +11,9 @@
 #include <signal.h>
 
 #include "itoolbox.h"
+#include "imembase.h"
+#include "imemdata.h"
+#include "imemkind.h"
 
 
 //=====================================================================
@@ -626,6 +629,236 @@ int iposix_addr_peername(int fd, iPosixAddress *addr)
 	return (hr == 0)? 0 : -1;
 }
 
+
+//=====================================================================
+// registry
+//=====================================================================
+static ib_managed *_iposix_reg_managed = NULL;
+static struct ib_hash_map _iposix_reg_map;
+static IMUTEX_TYPE _iposix_reg_lock1;
+static IMUTEX_TYPE _iposix_reg_lock2;
+static IMUTEX_TYPE _iposix_reg_lock3;
+static int _iposix_reg_inited = 0;
+static int _iposix_reg_closing = 0;
+
+// called at exit to cleanup the registry
+static void _iposix_reg_exit(void)
+{
+	if (_iposix_reg_inited) {
+		IMUTEX_LOCK(&_iposix_reg_lock1);
+		IMUTEX_LOCK(&_iposix_reg_lock2);
+		_iposix_reg_closing = 1;
+		IMUTEX_UNLOCK(&_iposix_reg_lock2);
+		IMUTEX_UNLOCK(&_iposix_reg_lock1);
+		if (_iposix_reg_managed) {
+			ib_managed_delete(_iposix_reg_managed);
+			_iposix_reg_managed = NULL;
+		}
+		ib_map_destroy(&_iposix_reg_map);
+		IMUTEX_DESTROY(&_iposix_reg_lock1);
+		IMUTEX_DESTROY(&_iposix_reg_lock2);
+		IMUTEX_DESTROY(&_iposix_reg_lock3);
+		_iposix_reg_inited = 0;
+	}
+}
+
+// initialize the registry, called once
+static void _iposix_reg_init(void)
+{
+	if (_iposix_reg_inited == 0) {
+		IMUTEX_INIT(&_iposix_reg_lock1);
+		IMUTEX_INIT(&_iposix_reg_lock2);
+		IMUTEX_INIT(&_iposix_reg_lock3);
+		_iposix_reg_managed = ib_managed_new();
+		ib_map_init(&_iposix_reg_map, ib_hash_func_cstr, ib_hash_compare_cstr);
+		_iposix_reg_map.key_copy = ib_hash_cstr_copy;
+		_iposix_reg_map.key_destroy = ib_hash_cstr_destroy;
+		_iposix_reg_map.value_copy = ib_hash_cstr_copy;
+		_iposix_reg_map.value_destroy = ib_hash_cstr_destroy;
+		atexit(_iposix_reg_exit);
+		_iposix_reg_inited = 1;
+	}
+}
+
+// ensure the registry is initialized, called before using the registry
+static void iposix_reg_ensure(void)
+{
+	static int inited = 0;
+	ithread_once(&inited, _iposix_reg_init);
+}
+
+// get environment value from registry, returns NULL if not found
+const char *iposix_reg_getenv(const char *name)
+{
+	const char *value = NULL;
+	iposix_reg_ensure();
+	IMUTEX_LOCK(&_iposix_reg_lock1);
+	if (!_iposix_reg_closing) {
+		value = (char*)ib_map_lookup(&_iposix_reg_map, name, NULL);
+	}
+	IMUTEX_UNLOCK(&_iposix_reg_lock1);
+	return value;
+}
+
+// set environment value to registry, if text is NULL, remove the key
+void iposix_reg_setenv(const char *name, const char *text)
+{
+	iposix_reg_ensure();
+	IMUTEX_LOCK(&_iposix_reg_lock1);
+	if (!_iposix_reg_closing) {
+		if (text) {
+			ib_map_set(&_iposix_reg_map, (char*)name, (char*)text);
+		}
+		else {
+			ib_map_remove(&_iposix_reg_map, (char*)name);
+		}
+	}
+	IMUTEX_UNLOCK(&_iposix_reg_lock1);
+}
+
+// get integer
+IINT64 iposix_reg_getint(const char *name, IINT64 defval)
+{
+	const char *text = iposix_reg_getenv(name);
+	if (text) {
+		return istrtoll(text, NULL, 10);
+	}
+	return defval;
+}
+
+// set integer value to registry
+void iposix_reg_setint(const char *name, IINT64 value)
+{
+	char buffer[64];
+	illtoa(value, buffer, 10);
+	iposix_reg_setenv(name, buffer);
+}
+
+// parse environment variables from text, like "key1=val1\nkey2=val2"
+void iposix_reg_parse(const char *text)
+{
+	ib_string *str = NULL;
+	ib_array *lines;
+	int n, i;
+	ASSERTION(text);
+	str = ib_string_new_from(text);
+	if (str == NULL) {
+		ASSERTION(str);
+		internal_panic("iposix_reg_parse: failed to create string from environ");
+		return;
+	}
+	lines = ib_string_split_c(str, '\n');
+	if (lines == NULL) {
+		ASSERTION(lines);
+		internal_panic("iposix_reg_parse: failed to split string into lines");
+		return;
+	}
+	ib_string_delete(str);
+	n = (int)ib_array_size(lines);
+	for (i = 0; i < n; i++) {
+		ib_string *line = (ib_string*)ib_array_ptr(lines)[i];
+		char cc;
+		ib_string_strip(line, "\r\n\t ");
+		if (ib_string_size(line) == 0) {
+			continue;
+		}
+		cc = ib_string_ptr(line)[0];
+		if (cc == ';' || cc == '#') {
+			continue;
+		}
+		if (line) {
+			char *text = ib_string_ptr(line);
+			char *eqptr = strchr(text, '=');
+			if (eqptr) {
+				int keylen = (int)(eqptr - text);
+				char *key = (char*)ikmem_malloc(keylen + 1);
+				if (key) {
+					char *value = eqptr + 1;
+					memcpy(key, text, keylen);
+					key[keylen] = 0;
+					istrstrip(key, "\r\n\t ");
+					istrstrip(value, "\r\n\t ");
+					if (key[0] != 0) {
+						iposix_reg_setenv(key, value);
+					}
+					ikmem_free(key);
+				}
+			}
+		}
+	}
+	ib_array_delete(lines);
+}
+
+// dump all registry entries to str in "key=value\n" format.
+// if str is NULL, this function does nothing.
+void iposix_reg_dump(ib_string *str)
+{
+	if (str == NULL) {
+		return;
+	}
+	iposix_reg_ensure();
+	IMUTEX_LOCK(&_iposix_reg_lock1);
+	if (!_iposix_reg_closing) {
+		struct ib_hash_entry *entry;
+		entry = ib_map_first(&_iposix_reg_map);
+		while (entry) {
+			const char *key = (const char*)ib_hash_key(entry);
+			const char *value = (const char*)ib_hash_value(entry);
+			if (key && value) {
+				ib_string_printf(str, "%s=%s\n", key, value);
+			}
+			entry = ib_map_next(&_iposix_reg_map, entry);
+		}
+	}
+	IMUTEX_UNLOCK(&_iposix_reg_lock1);
+}
+
+// query user object by key, returns NULL if not found
+void *iposix_reg_query(const char *key)
+{
+	void *obj = NULL;
+	iposix_reg_ensure();
+	IMUTEX_LOCK(&_iposix_reg_lock2);
+	if (!_iposix_reg_closing && _iposix_reg_managed) {
+		obj = ib_managed_query(_iposix_reg_managed, key);
+	}
+	IMUTEX_UNLOCK(&_iposix_reg_lock2);
+	return obj;
+}
+
+// install user object, the optional dtor will be called reversely
+// when process exiting. if obj is NULL existing obj will be removed.
+void iposix_reg_install(const char *key, void *obj, void (*dtor)(void*))
+{
+	int closing = 0;
+	iposix_reg_ensure();
+	IMUTEX_LOCK(&_iposix_reg_lock2);
+	if (!_iposix_reg_closing && _iposix_reg_managed) {
+		ib_managed_install(_iposix_reg_managed, key, obj, dtor);
+	}
+	else {
+		closing = 1;
+	}
+	IMUTEX_UNLOCK(&_iposix_reg_lock2);
+	if (closing && obj && dtor) {
+		dtor(obj);
+	}
+}
+
+// lock the registry, in case you want to do multiple operations atomically
+// like iposix_reg_query + iposix_reg_install
+void iposix_reg_lock(void)
+{
+	iposix_reg_ensure();
+	IMUTEX_LOCK(&_iposix_reg_lock3);
+}
+
+// unlock the registry
+void iposix_reg_unlock(void)
+{
+	iposix_reg_ensure();
+	IMUTEX_UNLOCK(&_iposix_reg_lock3);
+}
 
 
 //=====================================================================

@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <limits.h>
 
 
 /*====================================================================*/
@@ -135,8 +136,11 @@ typedef ISTDUINT32 IUINT32;
 #define inline INLINE
 #endif
 
-/* you can change this by config.h or predefined macro */
-/* set it to ((void)0) to skip assertion */
+/* ASSERTION can be overridden by config.h or a predefined macro.
+ * It is a diagnostic aid, not a safety barrier: when it is defined
+ * as a no-op, safety-critical entries still validate their arguments
+ * and fail gracefully (return NULL / no-op) instead of corrupting
+ * memory, but misuse becomes silent and harder to locate. */
 #ifndef ASSERTION
 	#if defined(NDEBUG)
 		#define ASSERTION(x) do { if (!(x)) abort(); } while (0)
@@ -179,6 +183,12 @@ void internal_free(struct IALLOCATOR *allocator, void *ptr);
 
 /* reallocate memory with a custom allocator or system allocator */
 void* internal_realloc(struct IALLOCATOR *allocator, void *ptr, size_t size);
+
+/* panic with a custom message, file and line number */
+void internal_panicat(const char *msg, const char *file, int line);
+
+/* panic with a custom message, automatically insert file and line num */
+#define internal_panic(msg) internal_panicat((msg), __FILE__, __LINE__)
 
 
 /*====================================================================*/
@@ -696,6 +706,11 @@ typedef struct ib_string ib_string;
 #define IB_STRING_SSO	14
 #endif
 
+/* max length of an ib_string: size/capacity are ints, and the heap
+ * buffer allocates (capacity + 2) bytes. requests growing a string
+ * beyond this limit trigger internal_panic (like an OOM condition) */
+#define IB_STRING_MAX_SIZE (INT_MAX - 2)
+
 struct ib_string
 {
 	char *ptr;
@@ -725,22 +740,34 @@ ib_string* ib_string_truncate(ib_string *str, int newsize);
 
 ib_string* ib_string_clear(ib_string *str);
 ib_string* ib_string_assign(ib_string *str, const char *src);
+
+/* size < 0 means strlen(src) */
 ib_string* ib_string_assign_size(ib_string *str, const char *src, int size);
 
 ib_string* ib_string_clone(const ib_string *str);
 ib_string* ib_string_erase(ib_string *str, int pos, int size);
+
+/* returns NULL if pos is out of range or size < 0 */
 ib_string* ib_string_insert(ib_string *str, int pos,
 		const void *data, int size);
+ib_string* ib_string_insert_c(ib_string *str, int pos, char c);
 
 ib_string* ib_string_append(ib_string *str, const char *src);
+
+/* returns NULL if size < 0 */
 ib_string* ib_string_append_size(ib_string *str, const char *src, int size);
 ib_string* ib_string_append_c(ib_string *str, char c);
 
 ib_string* ib_string_prepend(ib_string *str, const char *src);
+
+/* returns NULL if size < 0 */
 ib_string* ib_string_prepend_size(ib_string *str, const char *src, int size);
 ib_string* ib_string_prepend_c(ib_string *str, char c);
 
 ib_string* ib_string_rewrite(ib_string *str, int pos, const char *src);
+
+/* overwrite in place without resizing; size < 0 means strlen(src),
+ * pos can be negative (the part before position 0 is clipped) */
 ib_string* ib_string_rewrite_size(ib_string *str, int pos,
 		const char *src, int size);
 
@@ -760,6 +787,10 @@ ib_string* ib_string_strip(ib_string *str, const char *seps);
 
 ib_string* ib_string_replace(const ib_string *str, const char *src,
 		int srcsize, const char *dst, int dstsize);
+
+/* erase [pos, pos+size) then insert len bytes of src at pos, in place */
+ib_string* ib_string_replace_size(ib_string *str, int pos, int size,
+		const char *src, int len);
 
 
 /*--------------------------------------------------------------------*/
@@ -956,6 +987,12 @@ int ib_map_remove(struct ib_hash_map *hm, const void *key);
  * value_destroy on every entry. Entry structs freed via fastbin. */
 void ib_map_clear(struct ib_hash_map *hm);
 
+/* ib_map_shrink: shrink the bucket array to the necessary size, no
+ * callbacks invoked. Existing ib_hash_entry pointers stay valid, but
+ * the iteration order is rebuilt: don't call it inside the loops of
+ * ib_map_foreach / ib_map_foreach_safe */
+void ib_map_shrink(struct ib_hash_map *hm);
+
 /* return object count in the hash map */
 size_t ib_map_count(const struct ib_hash_map *hm);
 
@@ -993,7 +1030,8 @@ size_t ib_map_count(const struct ib_hash_map *hm);
 /* hash map traversal macros                                          */
 /*--------------------------------------------------------------------*/
 
-/* iterate over all entries in a hash map.
+/* iterate over all entries in a hash map. READ-ONLY traversal: do
+ * not insert or erase anything inside the loop.
  * entry: struct ib_hash_entry* loop variable
  * hm:    struct ib_hash_map* to iterate */
 #define ib_map_foreach(entry, hm) \
@@ -1001,7 +1039,12 @@ size_t ib_map_count(const struct ib_hash_map *hm);
 		(entry) != NULL; \
 		(entry) = ib_map_next((hm), (entry)))
 
-/* safe iteration: allows ib_map_erase(hm, entry) inside the loop.
+/* safe iteration: erasing the CURRENT entry via ib_map_erase(hm,
+ * entry) is allowed (erase never rehashes). Two things are still
+ * forbidden inside the loop: inserting new keys (expansion rehash
+ * scrambles the iteration order, entries may be skipped/revisited),
+ * and erasing entries other than the current one (the prefetched
+ * next may dangle).
  * entry: struct ib_hash_entry* loop variable
  * next:  struct ib_hash_entry* temporary variable
  * hm:    struct ib_hash_map* to iterate */
@@ -1016,6 +1059,16 @@ size_t ib_map_count(const struct ib_hash_map *hm);
 /*--------------------------------------------------------------------*/
 /* common type hash                                                   */
 /*--------------------------------------------------------------------*/
+
+/* seed used by ib_hash_func_str/cstr, replace the default value to
+ * mitigate hash-flooding against untrusted input */
+extern size_t ib_hash_seed;
+
+/* generic byte hashing (murmur-like / lua-style) and comparison */
+size_t ib_hash_bytes_stl(const void *ptr, size_t size, size_t seed);
+size_t ib_hash_bytes_lua(const void *ptr, size_t size, size_t seed);
+int ib_compare_bytes(const void *p1, size_t s1, const void *p2, size_t s2);
+
 size_t ib_hash_func_uint(const void *key);
 int ib_hash_compare_uint(const void *key1, const void *key2);
 
@@ -1033,10 +1086,13 @@ void ib_hash_str_destroy(void *str);
 void* ib_hash_cstr_copy(const void *cstr);
 void ib_hash_cstr_destroy(void *cstr);
 
+/* template functions for common key types, the map must be initialized
+ * with the corresponding hash and compare functions like
+ * ib_hash_func_uint and ib_hash_compare_uint */
 struct ib_hash_entry *ib_map_find_uint(struct ib_hash_map *hm, iulong key);
 struct ib_hash_entry *ib_map_find_int(struct ib_hash_map *hm, ilong key);
-struct ib_hash_entry *ib_map_find_str(struct ib_hash_map *hm, const ib_string *key);
-struct ib_hash_entry *ib_map_find_cstr(struct ib_hash_map *hm, const char *key);
+struct ib_hash_entry *ib_map_find_str(struct ib_hash_map*, const ib_string*);
+struct ib_hash_entry *ib_map_find_cstr(struct ib_hash_map*, const char*);
 
 
 /*--------------------------------------------------------------------*/

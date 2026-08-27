@@ -352,7 +352,8 @@ int async_event_active(const CAsyncEvent *evt);
 void async_timer_init(CAsyncTimer *timer,
 		void (*callback)(CAsyncLoop *loop, CAsyncTimer *evt));
 
-// start timer
+// start timer: repeat<=0 for infinite repeat, repeat>0 for limited 
+// repeat, repeat=1 for oneshot timer, returns 0 for success
 int async_timer_start(CAsyncLoop *loop, CAsyncTimer *timer,
 		IUINT32 period, int repeat);
 

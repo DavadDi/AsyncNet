@@ -26,6 +26,11 @@
 // - peek_uint8, read_uint16, read_uint32, read_uint64.
 // - peek_int8, read_int16, read_int32, read_int64.
 //
+// - write_varuint, read_varuint, peek_varuint, check_varuint: 
+//   variable length unsigned integer (base-128, 1-10 bytes).
+// - write_varint, read_varint, peek_varint, check_varint: 
+//   zigzag encoded variable length signed integer (1-10 bytes).
+//
 // - dump_string: dump ByteArray to string.
 // - load_string: load ByteArray from string.
 // - dump_hex: dump binary data into HEX format.
@@ -48,6 +53,7 @@
 #include <vector>
 #include <ostream>
 #include <sstream>
+#include <fstream>
 #include <map>
 
 #ifdef HAVE_CONFIG_H
@@ -219,6 +225,16 @@ public:
 	inline void write_bool(bool x);
 	inline bool read_bool();
 
+	inline void write_varuint(uint64_t x);
+	inline uint64_t read_varuint();
+	inline uint64_t peek_varuint() const;
+	inline int check_varuint() const;
+
+	inline void write_varint(int64_t x);
+	inline int64_t read_varint();
+	inline int64_t peek_varint() const;
+	inline int check_varint() const;
+
 	inline void write_float(float f);
 	inline float read_float();
 
@@ -301,6 +317,10 @@ public:
 	inline std::string dump_hex(bool char_visible = true, int limit = -1) const;
 
 private:
+	// shared varuint decoder: returns bytes consumed, 0 for incomplete
+	// data, -1 for malformed input. out may be NULL.
+	static int varuint_decode(const uint8_t *p, int avail, uint64_t *out);
+
 	int _pos;
 	int _size;
 	Endian _endian;
@@ -476,11 +496,19 @@ inline int ByteArray::remain() const {
 }
 
 inline unsigned char* ByteArray::data() {
-	return &_data[0];
+#if __cplusplus >= 201103 || (defined(_MSC_VER) && _MSC_VER >= 1900)
+	return _data.data();
+#else
+	return (_data.empty())? NULL : &_data[0];
+#endif
 }
 
 inline const unsigned char* ByteArray::data() const {
-	return &_data[0];
+#if __cplusplus >= 201103 || (defined(_MSC_VER) && _MSC_VER >= 1900)
+	return _data.data();
+#else
+	return (_data.empty())? NULL : &_data[0];
+#endif
 }
 
 
@@ -874,6 +902,107 @@ inline bool ByteArray::read_bool() {
 	return read_uint8()? true : false;
 }
 
+// write a variable-length unsigned integer (base-128 varuint),
+// takes 1-10 bytes, encoding is byte-order independent (endian 
+// independent), accepts any uint64_t value.
+inline void ByteArray::write_varuint(uint64_t x) {
+	uint8_t buf[10];
+	int i = 0;
+	do {
+		buf[i++] = (uint8_t)(x & 0x7f);
+		x >>= 7;
+		if (x != 0) {
+			buf[i - 1] |= 0x80;
+		}
+	} while (x != 0);
+	write(buf, i);
+}
+
+// shared varuint decoder: returns bytes consumed, 0 for incomplete
+// data, -1 for malformed input. note: non-canonical (redundant) 
+// encodings are accepted, eg. 0x80 0x00 also decodes to zero.
+inline int ByteArray::varuint_decode(const uint8_t *p, int avail, uint64_t *out) {
+	uint64_t x = 0;
+	int shift = 0;
+	int pos = 0;
+	while (pos < avail) {
+		uint8_t b = p[pos++];
+		x |= ((uint64_t)(b & 0x7f)) << shift;
+		if ((b & 0x80) == 0) {
+			if (out != NULL) out[0] = x;
+			return pos;
+		}
+		shift += 7;
+		if (shift >= 64) {
+			return -1;
+		}
+	}
+	return 0;
+}
+
+// position advances only when the whole varuint is successfully 
+// decoded, otherwise the buffer state is left untouched, which makes
+// it safe to retry after more data arrives. the NULL guard keeps the
+// probe safe on an empty buffer (this file supports C++98, where
+// std::vector::data() is not available).
+inline uint64_t ByteArray::read_varuint() {
+	uint64_t x = 0;
+	const uint8_t *p = (remain() > 0)? (const uint8_t*)&_data[_pos] : NULL;
+	int hr = varuint_decode(p, remain(), &x);
+	if (hr == 0) {
+		throw ByteError("ByteArray: require more data");
+	}
+	else if (hr < 0) {
+		throw ByteError("ByteArray: varuint too large");
+	}
+	_pos += hr;
+	return x;
+}
+
+// same as read_varuint() but without advancing the position
+inline uint64_t ByteArray::peek_varuint() const {
+	uint64_t x = 0;
+	const uint8_t *p = (remain() > 0)? (const uint8_t*)&_data[_pos] : NULL;
+	int hr = varuint_decode(p, remain(), &x);
+	if (hr == 0) {
+		throw ByteError("ByteArray: require more data");
+	}
+	else if (hr < 0) {
+		throw ByteError("ByteArray: varuint too large");
+	}
+	return x;
+}
+
+// probe the varuint at current position without consuming it,
+// returns its size in bytes (1-10), or 0 if not enough data to
+// determine, -1 for malformed data (more than 10 bytes).
+inline int ByteArray::check_varuint() const {
+	const uint8_t *p = (remain() > 0)? (const uint8_t*)&_data[_pos] : NULL;
+	return varuint_decode(p, remain(), NULL);
+}
+
+// zigzag encode: map signed x into unsigned so that numbers with a
+// small absolute value (of either sign) take few bytes: 
+// 0 -> 0, -1 -> 1, 1 -> 2, -2 -> 3, 2 -> 4, ...
+inline void ByteArray::write_varint(int64_t x) {
+	uint64_t u = ((uint64_t)x << 1) ^ (uint64_t)(x >> 63);
+	write_varuint(u);
+}
+
+inline int64_t ByteArray::read_varint() {
+	uint64_t u = read_varuint();
+	return (int64_t)((u >> 1) ^ (uint64_t)(0 - (u & 1)));
+}
+
+inline int64_t ByteArray::peek_varint() const {
+	uint64_t u = peek_varuint();
+	return (int64_t)((u >> 1) ^ (uint64_t)(0 - (u & 1)));
+}
+
+inline int ByteArray::check_varint() const {
+	return check_varuint();
+}
+
 inline void ByteArray::write_float(float f) {
 	union { float f; uint8_t b[4]; } v;
 	v.f = f;
@@ -882,6 +1011,7 @@ inline void ByteArray::write_float(float f) {
 
 inline float ByteArray::read_float() {
 	union { float f; uint8_t b[4]; } v;
+	require(4);
 	read(v.b, 4);
 	return v.f;
 }
@@ -894,6 +1024,7 @@ inline void ByteArray::write_double(double d) {
 
 inline double ByteArray::read_double() {
 	union { double d; uint8_t b[8]; } v;
+	require(8);
 	read(v.b, 8);
 	return v.d;
 }
@@ -1065,7 +1196,7 @@ inline void ByteArray::load_string(std::string &content) {
 // dump binary hex
 inline std::string ByteArray::dump_hex(bool char_visible, int limit) const {
 	const char *hex = "0123456789ABCDEF";
-	const unsigned char *src = data();
+	const unsigned char *src = (_size > 0)? &_data[0] : NULL;
 	int size = (limit < 0)? _size : Minimum(_size, limit);
 	int count = (size + 15) / 16, offset = 0, remain = size;
 	std::string output;
@@ -1110,7 +1241,7 @@ inline std::string ByteArray::dump_hex(bool char_visible, int limit) const {
 
 // calculate checksum
 inline uint32_t ByteArray::checksum() const {
-	const unsigned char *ptr = data();
+	const unsigned char *ptr = (_size > 0)? &_data[0] : NULL;
 	const unsigned char *endup = ptr + size();
 	uint32_t checksum = 0;
 	for (; ptr < endup; ptr++) {
@@ -1122,7 +1253,7 @@ inline uint32_t ByteArray::checksum() const {
 
 // apply xor for every byte
 inline void ByteArray::obfuscate(uint8_t mask) {
-	unsigned char *ptr = data();
+	unsigned char *ptr = (_size > 0)? &_data[0] : NULL;
 	unsigned char *endup = ptr + size();
 	for (; ptr < endup; ptr++) {
 		ptr[0] ^= mask;
@@ -1132,7 +1263,7 @@ inline void ByteArray::obfuscate(uint8_t mask) {
 
 // apply xor string for every byte
 inline void ByteArray::obfuscate(const uint8_t *str, int size) {
-	unsigned char *ptr = data();
+	unsigned char *ptr = (_size > 0)? &_data[0] : NULL;
 	unsigned char *endup = ptr + this->size();
 	const uint8_t *mask = str;
 	const uint8_t *mend = mask + size;
@@ -1150,46 +1281,31 @@ inline bool ByteArray::load(const char *filename)
 {
 	rewind();
 	truncate();
-	FILE *fp = fopen(filename, "rb");
-	if (fp == NULL) return false;
+	std::ifstream fp(filename, std::ios::binary);
+	if (!fp.is_open()) return false;
 	const int bufsize = 4096;
 	unsigned char buffer[bufsize];
-	bool hr = true;
-	while (1) {
-		size_t readed = fread(buffer, 1, bufsize, fp);
-		if (readed == 0) {
-			if (feof(fp)) break;
-			else {
-				hr = false;
-				break;
-			}
+	while (fp.good()) {
+		fp.read(reinterpret_cast<char*>(buffer), bufsize);
+		std::streamsize readed = fp.gcount();
+		if (readed > 0) {
+			write(buffer, (int)readed);
 		}
-		write(buffer, (int)readed);
 	}
-	fclose(fp);
-	return hr;
+	return fp.eof();
 }
 
 
-// save content to file
+// save content to file (the entire buffer is saved, regardless of
+// the current position, symmetric with load())
 inline bool ByteArray::save(const char *filename) const
 {
-	FILE *fp = fopen(filename, "wb");
-	if (fp == NULL) return false;
-	const char *ptr = reinterpret_cast<const char*>(data());
-	size_t remain = size();
-	bool hr = true;
-	while (remain > 0) {
-		size_t written = fwrite(ptr, 1, remain, fp);
-		remain -= written;
-		ptr += written;
-		if (written == 0) { 
-			hr = false;
-			break;
-		}
+	std::ofstream fp(filename, std::ios::binary);
+	if (!fp.is_open()) return false;
+	if (_size > 0) {
+		fp.write(reinterpret_cast<const char*>(data()), _size);
 	}
-	fclose(fp);
-	return hr;
+	return fp.good();
 }
 
 

@@ -152,6 +152,43 @@ void iposix_res_unique(iPosixRes *res);
 iPosixRes *iposix_res_get(const char *hostname, int ipv);
 
 
+//=====================================================================
+// internal registry
+//=====================================================================
+
+// get environment value from registry, returns NULL if not found
+const char *iposix_reg_getenv(const char *name);
+
+// set environment value to registry, if text is NULL, remove the key
+void iposix_reg_setenv(const char *name, const char *text);
+
+// get integer from registry, returns defval if not found
+IINT64 iposix_reg_getint(const char *name, IINT64 defval);
+
+// set integer value to registry
+void iposix_reg_setint(const char *name, IINT64 value);
+
+// parse environment variables from text, like "name1=val1\nname2=val2"
+void iposix_reg_parse(const char *text);
+
+// dump all registry entries to str in "key=value\n" format.
+// if str is NULL, this function does nothing.
+void iposix_reg_dump(ib_string *str);
+
+// query user object by key, returns NULL if not found
+void *iposix_reg_query(const char *key);
+
+// install user object, the optional dtor will be called reversely
+// when process exiting. if obj is NULL existing obj will be removed.
+void iposix_reg_install(const char *key, void *obj, void (*dtor)(void*));
+
+// lock the registry, in case you want to do multiple operations atomically
+// like iposix_reg_query + iposix_reg_install
+void iposix_reg_lock(void);
+
+// unlock the registry
+void iposix_reg_unlock(void);
+
 
 //=====================================================================
 // utils

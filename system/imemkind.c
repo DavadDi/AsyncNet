@@ -215,6 +215,195 @@ ilong ib_string_save(const ib_string *out, const char *filename)
 }
 
 
+//=====================================================================
+// managed user object
+//=====================================================================
+typedef struct _ib_entry {
+	ilist_head node;              // managed user object list node
+	char *key;                    // managed user object key
+	void *ptr;                    // managed user object pointer
+	void (*cleanup)(void *obj);   // destructor for managed object
+}	ib_entry;
+
+struct ib_managed {
+	struct ib_hash_map *obj_map;  // user object map for loop object
+	ilist_head obj_head;          // user object list for loop object
+	int closing;                  // flag if the container is closing
+};
+
+
+//---------------------------------------------------------------------
+// create a new managed object container
+//---------------------------------------------------------------------
+ib_managed *ib_managed_new(void)
+{
+	struct ib_hash_map *map = NULL;
+	ib_managed *managed;
+	managed = (ib_managed*)ikmem_malloc(sizeof(ib_managed));
+	if (managed == NULL) {
+		return NULL;
+	}
+	ilist_init(&managed->obj_head);
+	map = (struct ib_hash_map*)ikmem_malloc(sizeof(struct ib_hash_map));
+	if (map) {
+		ib_map_init(map, ib_hash_func_cstr, ib_hash_compare_cstr);
+		map->key_copy = ib_hash_cstr_copy;
+		map->key_destroy = ib_hash_cstr_destroy;
+	}
+	else {   // map is NULL
+		ASSERTION(map);
+		ikmem_free(managed);
+		return NULL;
+	}
+	managed->obj_map = map;
+	managed->closing = 0;
+	return managed;
+}
+
+
+//---------------------------------------------------------------------
+// delete the managed object container and all installed objects
+//---------------------------------------------------------------------
+void ib_managed_delete(ib_managed *managed)
+{
+	assert(managed);
+	assert(managed->obj_map);
+	managed->closing = 1;
+	while (!ilist_is_empty(&managed->obj_head)) {
+		ilist_head *it = managed->obj_head.next;
+		ib_entry *object = ilist_entry(it, ib_entry, node);
+		void *ptr = object->ptr;
+		void (*cleanup)(void*) = object->cleanup;
+		ilist_del_init(&object->node);
+		ib_map_remove(managed->obj_map, object->key);
+		object->ptr = NULL;
+		if (object->key) {
+			ikmem_free(object->key);
+			object->key = NULL;
+		}
+		ikmem_free(object);
+		if (cleanup) {
+			if (ptr) {
+				cleanup(ptr);
+			}
+		}
+	}
+	ib_map_destroy(managed->obj_map);
+	ikmem_free(managed->obj_map);
+	managed->obj_map = NULL;
+	ikmem_free(managed);
+}
+
+
+//---------------------------------------------------------------------
+// install managed user object, the optional cleanup will be called 
+// reversely when deleting the container. if obj is NULL existing obj 
+// will be removed.
+//---------------------------------------------------------------------
+int ib_managed_install(ib_managed *managed, const char *key, void *obj,
+		void (*cleanup)(void *obj))
+{
+	struct ib_hash_entry *entry;
+	ib_entry *object;
+	void *oldptr = NULL;
+	void (*olddtor)(void*) = NULL;
+	if (key == NULL) {
+		return -1;
+	}
+	if (managed->closing || managed->obj_map == NULL) {
+		// the container is being destroyed, nothing can be installed any
+		// more: destroy the object in place to avoid leaking it
+		if (obj) {
+			if (cleanup) cleanup(obj);
+			return 0;
+		}
+	}
+	if (managed->obj_map == NULL) {
+		// object map has been released already (after obj_quit), so
+		// there is nothing left to remove
+		return 0;
+	}
+	if (obj != NULL) {
+		entry = ib_map_find(managed->obj_map, key);
+		if (entry) {
+			object = (ib_entry*)ib_hash_value(entry);
+			if (object->ptr == obj) {
+				object->cleanup = cleanup;
+				return 0;
+			}
+			oldptr = object->ptr;
+			olddtor = object->cleanup;
+			object->ptr = obj;
+			object->cleanup = cleanup;
+		}
+		else {
+			object = (ib_entry*)ikmem_malloc(sizeof(ib_entry));
+			if (!object) {
+				internal_panic("ib_managed_install: failed to allocate ib_entry");
+				return -1;
+			}
+			object->key = istrdup(key);
+			object->ptr = obj;
+			object->cleanup = cleanup;
+			if (object->key == NULL) {
+				internal_panic("ib_managed_install: failed to duplicate key string");
+				abort();
+				return -1;
+			}
+			ilist_init(&object->node);
+			entry = ib_map_set(managed->obj_map, (void*)key, object);
+			if (entry == NULL) {
+				ikmem_free(object->key);
+				ikmem_free(object);
+				internal_panic("ib_managed_install: failed to insert object into map");
+				return -1;
+			}
+			ilist_add(&object->node, &managed->obj_head);
+		}
+	}
+	else {
+		entry = ib_map_find(managed->obj_map, key);
+		if (entry) {
+			object = (ib_entry*)ib_hash_value(entry);
+			oldptr = object->ptr;
+			olddtor = object->cleanup;
+			ilist_del_init(&object->node);
+			ib_map_erase(managed->obj_map, entry);
+			if (object->key) {
+				ikmem_free(object->key);
+				object->key = NULL;
+			}
+			object->ptr = NULL;
+			ikmem_free(object);
+		}
+	}
+	if (olddtor) {
+		if (oldptr) olddtor(oldptr);
+	}
+	return 0;
+}
+
+
+//---------------------------------------------------------------------
+// query managed user object by key, returns NULL if not found
+//---------------------------------------------------------------------
+void *ib_managed_query(ib_managed *managed, const char *key)
+{
+	struct ib_hash_entry *entry;
+	ib_entry *object;
+	if (key == NULL) return NULL;
+	if (managed->obj_map == NULL) return NULL;
+	entry = ib_map_find(managed->obj_map, key);
+	if (entry) {
+		object = (ib_entry*)ib_hash_value(entry);
+		if (object) {
+			return object->ptr;
+		}
+	}
+	return NULL;
+}
+
+
 
 //=====================================================================
 // CAsyncReader
@@ -1475,30 +1664,30 @@ int ib_resp_encode(ib_string *out, const ib_object *obj)
 		break;
 
 	case IB_OBJECT_BOOL:
-		ib_resp_write_bool(out, (int)obj->integer);
+		ib_resp_write_bool(out, (int)obj->u.integer);
 		break;
 
 	case IB_OBJECT_INT:
-		ib_resp_write_int(out, obj->integer);
+		ib_resp_write_int(out, obj->u.integer);
 		break;
 
 	case IB_OBJECT_DOUBLE:
-		ib_resp_write_double(out, obj->dval);
+		ib_resp_write_double(out, obj->u.dval);
 		break;
 
 	case IB_OBJECT_STR:
 		if (obj->flags & IB_OBJECT_FLAG_ERROR)
-			ib_resp_write_error(out, (const char *)obj->str);
+			ib_resp_write_error(out, (const char *)obj->u.str);
 		else
-			ib_resp_write_bulk(out, obj->str, obj->size);
+			ib_resp_write_bulk(out, obj->u.str, obj->size);
 		break;
 
 	case IB_OBJECT_BIN:
 		if (obj->flags & IB_OBJECT_FLAG_ERROR) {
-			ib_resp_write_bulk_error(out, obj->str, obj->size);
+			ib_resp_write_bulk_error(out, obj->u.str, obj->size);
 		}
 		else {
-			ib_resp_write_bulk(out, obj->str, obj->size);
+			ib_resp_write_bulk(out, obj->u.str, obj->size);
 		}
 		break;
 
@@ -1511,7 +1700,7 @@ int ib_resp_encode(ib_string *out, const ib_object *obj)
 		else
 			ib_resp_write_array(out, obj->size);
 		for (i = 0; i < obj->size; i++) {
-			if (ib_resp_encode(out, obj->element[i]) < 0)
+			if (ib_resp_encode(out, obj->u.element[i]) < 0)
 				return -1;
 		}
 		break;
@@ -1521,9 +1710,9 @@ int ib_resp_encode(ib_string *out, const ib_object *obj)
 		int i;
 		ib_resp_write_map(out, obj->size);
 		for (i = 0; i < obj->size; i++) {
-			if (ib_resp_encode(out, obj->element[i * 2]) < 0)
+			if (ib_resp_encode(out, obj->u.element[i * 2]) < 0)
 				return -1;
-			if (ib_resp_encode(out, obj->element[i * 2 + 1]) < 0)
+			if (ib_resp_encode(out, obj->u.element[i * 2 + 1]) < 0)
 				return -1;
 		}
 		break;
@@ -2868,19 +3057,19 @@ int ib_msgpack_encode(ib_string *out, const ib_object *obj)
 		break;
 
 	case IB_OBJECT_BOOL:
-		ib_msgpack_write_bool(out, (int)obj->integer);
+		ib_msgpack_write_bool(out, (int)obj->u.integer);
 		break;
 
 	case IB_OBJECT_INT:
-		ib_msgpack_write_int(out, obj->integer);
+		ib_msgpack_write_int(out, obj->u.integer);
 		break;
 
 	case IB_OBJECT_DOUBLE:
-		ib_msgpack_write_double(out, obj->dval);
+		ib_msgpack_write_double(out, obj->u.dval);
 		break;
 
 	case IB_OBJECT_STR:
-		ib_msgpack_write_str(out, (const char *)obj->str, obj->size);
+		ib_msgpack_write_str(out, (const char *)obj->u.str, obj->size);
 		break;
 
 	case IB_OBJECT_BIN:
@@ -2888,10 +3077,10 @@ int ib_msgpack_encode(ib_string *out, const ib_object *obj)
 			int ext_type = (int)(signed char)(
 					(obj->flags & IB_OBJECT_FLAG_EXT_MASK)
 					>> IB_OBJECT_FLAG_EXT_SHIFT);
-			ib_msgpack_write_ext(out, ext_type, obj->str, obj->size);
+			ib_msgpack_write_ext(out, ext_type, obj->u.str, obj->size);
 		}
 		else {
-			ib_msgpack_write_bin(out, obj->str, obj->size);
+			ib_msgpack_write_bin(out, obj->u.str, obj->size);
 		}
 		break;
 
@@ -2899,7 +3088,7 @@ int ib_msgpack_encode(ib_string *out, const ib_object *obj)
 		int i;
 		ib_msgpack_write_array(out, obj->size);
 		for (i = 0; i < obj->size; i++) {
-			if (ib_msgpack_encode(out, obj->element[i]) < 0)
+			if (ib_msgpack_encode(out, obj->u.element[i]) < 0)
 				return -1;
 		}
 		break;
@@ -2909,9 +3098,9 @@ int ib_msgpack_encode(ib_string *out, const ib_object *obj)
 		int i;
 		ib_msgpack_write_map(out, obj->size);
 		for (i = 0; i < obj->size; i++) {
-			if (ib_msgpack_encode(out, obj->element[i * 2]) < 0)
+			if (ib_msgpack_encode(out, obj->u.element[i * 2]) < 0)
 				return -1;
-			if (ib_msgpack_encode(out, obj->element[i * 2 + 1]) < 0)
+			if (ib_msgpack_encode(out, obj->u.element[i * 2 + 1]) < 0)
 				return -1;
 		}
 		break;
@@ -3154,23 +3343,23 @@ int ib_json_encode(ib_string *out, const ib_object *obj)
 		break;
 
 	case IB_OBJECT_BOOL:
-		ib_json_write_bool(out, (int)obj->integer);
+		ib_json_write_bool(out, (int)obj->u.integer);
 		break;
 
 	case IB_OBJECT_INT:
-		ib_json_write_int(out, obj->integer);
+		ib_json_write_int(out, obj->u.integer);
 		break;
 
 	case IB_OBJECT_DOUBLE:
-		ib_json_write_double(out, obj->dval);
+		ib_json_write_double(out, obj->u.dval);
 		break;
 
 	case IB_OBJECT_STR:
-		ib_json_write_str(out, (const char *)obj->str, obj->size);
+		ib_json_write_str(out, (const char *)obj->u.str, obj->size);
 		break;
 
 	case IB_OBJECT_BIN:
-		ib_json_write_str(out, (const char *)obj->str, obj->size);
+		ib_json_write_str(out, (const char *)obj->u.str, obj->size);
 		break;
 
 	case IB_OBJECT_ARRAY: {
@@ -3178,7 +3367,7 @@ int ib_json_encode(ib_string *out, const ib_object *obj)
 		ib_json_write_array_begin(out);
 		for (i = 0; i < obj->size; i++) {
 			if (i > 0) ib_json_write_comma(out);
-			if (ib_json_encode(out, obj->element[i]) < 0)
+			if (ib_json_encode(out, obj->u.element[i]) < 0)
 				return -1;
 		}
 		ib_json_write_array_end(out);
@@ -3189,13 +3378,13 @@ int ib_json_encode(ib_string *out, const ib_object *obj)
 		int i;
 		ib_json_write_object_begin(out);
 		for (i = 0; i < obj->size; i++) {
-			ib_object *key = obj->element[i * 2];
-			ib_object *val = obj->element[i * 2 + 1];
+			ib_object *key = obj->u.element[i * 2];
+			ib_object *val = obj->u.element[i * 2 + 1];
 			if (i > 0) ib_json_write_comma(out);
 			/* key must be string-like */
 			if (key && (key->type == IB_OBJECT_STR ||
 						key->type == IB_OBJECT_BIN)) {
-				ib_json_write_key(out, (const char *)key->str,
+				ib_json_write_key(out, (const char *)key->u.str,
 						key->size);
 			}
 			else {
@@ -4164,30 +4353,30 @@ static int ib_json_encode_pretty_impl(ib_string *out,
 		break;
 
 	case IB_OBJECT_BOOL:
-		ib_json_write_bool(out, (int)obj->integer);
+		ib_json_write_bool(out, (int)obj->u.integer);
 		break;
 
 	case IB_OBJECT_INT:
-		ib_json_write_int(out, obj->integer);
+		ib_json_write_int(out, obj->u.integer);
 		break;
 
 	case IB_OBJECT_DOUBLE:
-		ib_json_write_double(out, obj->dval);
+		ib_json_write_double(out, obj->u.dval);
 		break;
 
 	case IB_OBJECT_STR:
-		ib_json_write_str(out, (const char*)obj->str, obj->size);
+		ib_json_write_str(out, (const char*)obj->u.str, obj->size);
 		break;
 
 	case IB_OBJECT_BIN:
 	{
 		/* BIN -> "$base64:<base64>" */
-		ilong b64len = ibase64_encode(obj->str, obj->size, NULL);
+		ilong b64len = ibase64_encode(obj->u.str, obj->size, NULL);
 		ib_string_append_size(out, "\"$base64:", 9);
 		if (b64len > 0) {
 			char *b64buf = (char*)ikmem_malloc((size_t)(b64len + 1));
 			if (b64buf == NULL) return -1;
-			ibase64_encode(obj->str, obj->size, b64buf);
+			ibase64_encode(obj->u.str, obj->size, b64buf);
 			ib_string_append_size(out, b64buf, (int)b64len);
 			ikmem_free(b64buf);
 		}
@@ -4209,7 +4398,7 @@ static int ib_json_encode_pretty_impl(ib_string *out,
 			if (indent > 0) {
 				ib_string_append_size(out, pad, padlen + indent);
 			}
-			if (ib_json_encode_pretty_impl(out, obj->element[i],
+			if (ib_json_encode_pretty_impl(out, obj->u.element[i],
 					indent, depth + 1) < 0)
 				return -1;
 			if (i + 1 < obj->size) {
@@ -4244,7 +4433,7 @@ static int ib_json_encode_pretty_impl(ib_string *out,
 			}
 			if (key && (key->type == IB_OBJECT_STR ||
 						key->type == IB_OBJECT_BIN)) {
-				ib_json_write_str(out, (const char*)key->str, key->size);
+				ib_json_write_str(out, (const char*)key->u.str, key->size);
 			}
 			else {
 				ib_string *tmp = ib_string_new();
@@ -4329,7 +4518,7 @@ static int ib_object_dump_impl(ib_string *out,
 		break;
 
 	case IB_OBJECT_BOOL:
-		if (obj->integer) ib_string_append_size(out, "true", 4);
+		if (obj->u.integer) ib_string_append_size(out, "true", 4);
 		else ib_string_append_size(out, "false", 5);
 		break;
 
@@ -4337,21 +4526,21 @@ static int ib_object_dump_impl(ib_string *out,
 	{
 		// append integer as decimal string using illtoa for cross-platform compatibility (VC6 %lld fix)
 		char buf[32];
-		int n = illtoa((IINT64)obj->integer, buf, 10);
+		int n = illtoa((IINT64)obj->u.integer, buf, 10);
 		ib_string_append_size(out, buf, n);
 		break;
 	}
 
 	case IB_OBJECT_DOUBLE:
 		// append double as %g format
-		ib_string_printf(out, "%g", obj->dval);
+		ib_string_printf(out, "%g", obj->u.dval);
 		break;
 
 	case IB_OBJECT_STR:
 	{
 		ib_string_append_c(out, '"');
 		for (i = 0; i < obj->size; i++) {
-			unsigned char c = obj->str[i];
+			unsigned char c = obj->u.str[i];
 			switch (c) {
 			case '"':  ib_string_append_size(out, "\\\"", 2); break;
 			case '\\': ib_string_append_size(out, "\\\\", 2); break;
@@ -4389,7 +4578,7 @@ static int ib_object_dump_impl(ib_string *out,
 		for (i = 0; i < show; i++) {
 			if (i > 0) ib_string_append_c(out, ' ');
 			// append each byte as hex
-			ib_string_printf(out, "%02x", obj->str[i]);
+			ib_string_printf(out, "%02x", obj->u.str[i]);
 		}
 		if (obj->size > IB_DUMP_BIN_MAX) {
 			ib_string_append_size(out, " ...", 4);
@@ -4412,7 +4601,7 @@ static int ib_object_dump_impl(ib_string *out,
 			if (indent > 0) {
 				ib_string_append_size(out, pad, padlen + indent);
 			}
-			if (ib_object_dump_impl(out, obj->element[i],
+			if (ib_object_dump_impl(out, obj->u.element[i],
 					indent, depth + 1) < 0)
 				return -1;
 			if (i + 1 < obj->size) {

@@ -1174,8 +1174,10 @@ int async_loop_once(CAsyncLoop *loop, IINT32 millisec)
 	// accumulate number of dispatched events
 	loop->proceeds += (IINT64)cc;
 
-	loop->depth--;
-
+	// NOTE: loop->depth is kept non-zero until the very end of this
+	// function, so once/idle callbacks are covered by the re-entrance
+	// guard as well: a nested async_loop_once() would otherwise clear
+	// loop->array_once/array_idle while they are being iterated
 	if (!ilist_is_empty(&loop->list_once)) {
 		async_loop_dispatch_once(loop, ASYNC_ONCE_HIGH);
 		async_loop_dispatch_once(loop, ASYNC_ONCE_NORMAL);
@@ -1198,6 +1200,8 @@ int async_loop_once(CAsyncLoop *loop, IINT32 millisec)
 			loop->on_idle(loop);
 		}
 	}
+
+	loop->depth--;
 
 #if ASYNC_LOOP_GUARD_CHECK
 	// memory guard check
@@ -1268,12 +1272,17 @@ static int async_loop_dispatch_post(CAsyncLoop *loop)
 		ilist_head queue;
 		ilist_init(&queue);
 		ilist_splice_init(&loop->list_post, &queue);
-		loop->num_postpone = 0;
+		// postpones moved into the local queue are still active, so
+		// num_postpone must be decreased one by one when they are
+		// deactivated below: a callback may call async_post_stop() on
+		// a sibling which is still waiting in this queue, and that
+		// decreases num_postpone as well
 		while (!ilist_is_empty(&queue)) {
 			ilist_head *it = queue.next;
 			CAsyncPostpone *postpone = ilist_entry(it, CAsyncPostpone, node);
 			ilist_del_init(&postpone->node);
 			postpone->active = 0;
+			loop->num_postpone--;
 			if (loop->logmask & ASYNC_LOOP_LOG_POST) {
 				async_loop_log(loop, ASYNC_LOOP_LOG_POST,
 					"[postpone] active ptr=%p", (void*)postpone);
@@ -1460,11 +1469,18 @@ void async_loop_install(CAsyncLoop *loop, const char *key, void *obj,
 		assert(key);
 		return;
 	}
-	if (loop->closing) {
+	if (loop->closing || loop->obj_map == NULL) {
+		// the loop is being destroyed, nothing can be installed any
+		// more: destroy the object in place to avoid leaking it
 		if (obj) {
 			if (dtor) dtor(obj);
 			return;
 		}
+	}
+	if (loop->obj_map == NULL) {
+		// object map has been released already (after obj_quit), so
+		// there is nothing left to remove
+		return;
 	}
 	if (obj != NULL) {
 		entry = ib_map_find(loop->obj_map, key);
@@ -1766,6 +1782,13 @@ static void async_timer_cb(void *data, void *user)
 			"[timer] active ptr=%p, period=%d", 
 			(void*)timer, timer->timer_node.period);
 	}
+	// a finite-repeat timer that has exhausted its repeat count is
+	// auto-stopped inside itimer BEFORE this callback runs, without
+	// passing through async_timer_stop(): sync num_timers here, so
+	// that a restart from within the callback counts it back in
+	if (itimer_evt_status(&timer->timer_node) == 0) {
+		loop->num_timers--;
+	}
 	if (timer->callback) {
 		timer->callback(loop, timer);
 	}
@@ -1785,7 +1808,8 @@ void async_timer_init(CAsyncTimer *timer,
 
 
 //---------------------------------------------------------------------
-// start timer
+// start timer: repeat<=0 for infinite repeat, repeat>0 for limited 
+// repeat, repeat=1 for oneshot timer, returns 0 for success
 //---------------------------------------------------------------------
 int async_timer_start(CAsyncLoop *loop, CAsyncTimer *timer,
 		IUINT32 period, int repeat)

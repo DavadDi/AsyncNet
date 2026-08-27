@@ -112,7 +112,7 @@ typedef struct ib_object {
 		double dval;                   // IB_OBJECT_DOUBLE
 		unsigned char *str;            // IB_OBJECT_STR/BIN
 		struct ib_object **element;    // IB_OBJECT_ARRAY/MAP
-	};
+	}   u;
 }   ib_object;
 
 #define IB_OBJECT_NIL     0
@@ -141,22 +141,22 @@ void ib_object_init_int(ib_object *obj, IINT64 val);
 void ib_object_init_double(ib_object *obj, double val);
 
 // initialize ib_object to string type, won't involve any
-// memory allocation, just set obj->str to str pointer.
+// memory allocation, just set obj->u.str to str pointer.
 // Negative size is clamped to 0; NULL with positive size is clamped to 0.
 void ib_object_init_str(ib_object *obj, const char *str, int size);
 
 // initialize ib_object to binary type, won't involve any
-// memory allocation, just set obj->str to bin pointer.
+// memory allocation, just set obj->u.str to bin pointer.
 // Negative size is clamped to 0; NULL with positive size is clamped to 0.
 void ib_object_init_bin(ib_object *obj, const void *bin, int size);
 
 // initialize ib_object to array type, won't involve any
-// memory allocation, just set obj->element to element pointer.
+// memory allocation, just set obj->u.element to element pointer.
 // Negative size is clamped to 0.
 void ib_object_init_array(ib_object *obj, ib_object **element, int size);
 
 // initialize ib_object to map type, won't involve any
-// memory allocation, just set obj->element to element pointer.
+// memory allocation, just set obj->u.element to element pointer.
 // Negative size is clamped to 0.
 void ib_object_init_map(ib_object *obj, ib_object **element, int size);
 
@@ -200,7 +200,7 @@ ib_object *ib_object_new_str(struct IALLOCATOR *alloc,
 // returns NULL if len < 0 or allocation fails.
 // When bin is NULL and len > 0, buffer is allocated and zero-filled
 // (plus trailing '\0').
-// the buffer afterwards via obj->str.
+// the buffer afterwards via obj->u.str.
 ib_object *ib_object_new_bin(struct IALLOCATOR *alloc,
 		const void *bin, int len);
 
@@ -273,8 +273,8 @@ int ib_object_array_insert(struct IALLOCATOR *alloc,
 // get item at index (read-only), returns NULL if arr is NULL or out of range
 ib_object *ib_object_array_get(const ib_object *arr, int index);
 
-// detach item at index (remove without freeing), returns NULL if arr is NULL.
-// asserts arr has FLAG_OWNED.
+// detach item at index (remove without freeing),
+// returns NULL if arr is NULL. asserts arr has FLAG_OWNED.
 ib_object *ib_object_array_detach(ib_object *arr, int index);
 
 // remove and delete item at index. asserts arr has FLAG_OWNED.
@@ -342,8 +342,8 @@ int ib_object_map_sort(ib_object *map);
 void ib_object_map_clear(struct IALLOCATOR *alloc, ib_object *map);
 
 // indexed access to key-value pairs
-#define ib_object_map_key(map, i)  ((map)->element[(i) * 2])
-#define ib_object_map_val(map, i)  ((map)->element[(i) * 2 + 1])
+#define ib_object_map_key(map, i)  ((map)->u.element[(i) * 2])
+#define ib_object_map_val(map, i)  ((map)->u.element[(i) * 2 + 1])
 
 
 // map mutation (const char *key convenience)
@@ -407,7 +407,8 @@ int ib_object_bin_append(struct IALLOCATOR *alloc,
 
 // resize STR to newsize bytes. If newsize > capacity, grows buffer;
 // if newsize <= capacity, only changes size (capacity unchanged).
-// Null-terminated. asserts DYNAMIC|OWNED. Returns 0 on success, -1 on failure.
+// Null-terminated. asserts DYNAMIC|OWNED.
+// Returns 0 on success, -1 on failure.
 int ib_object_str_resize(struct IALLOCATOR *alloc,
 		ib_object *obj, int newsize);
 
@@ -489,13 +490,14 @@ int ib_object_path_exists(const ib_object *obj, const char *path);
 // safe int extraction: INT -> integer, BOOL -> 0 or 1, else defval.
 IINT64 ib_object_as_int(const ib_object *obj, IINT64 defval);
 
-// safe double extraction: DOUBLE -> dval, INT -> cast to double, else defval.
+// safe double extraction: DOUBLE -> dval, INT -> cast to double, else defval
 double ib_object_as_double(const ib_object *obj, double defval);
 
-// safe bool extraction: BOOL -> 0 or 1, INT -> 0 is false else true, else defval.
+// safe bool extraction: BOOL -> 0 or 1, INT -> 0 is false else true,
+// else defval.
 int ib_object_as_bool(const ib_object *obj, int defval);
 
-// safe str extraction: STR -> obj->str pointer, else defval.
+// safe str extraction: STR -> obj->u.str pointer, else defval.
 // Returned pointer length is obj->size, null-terminated for OWNED objects.
 const char *ib_object_as_str(const ib_object *obj, const char *defval);
 
@@ -537,6 +539,10 @@ ilong iring_fill(struct IRING *ring, ilong pos, unsigned char ch, ilong len);
 // swap internal buffer
 void iring_swap(struct IRING *ring, void *buffer, ilong capacity);
 
+// get two pointers and sizes
+void iring_ptrs(struct IRING *ring, void **p1, ilong *s1,
+	void **p2, ilong *s2);
+
 
 //=====================================================================
 // IMSTREAM: In-Memory FIFO Buffer
@@ -551,7 +557,7 @@ struct IMSTREAM
 	iulong size;
 	iulong lrusize;
 	ilong hiwater;
-	ilong lowater; 
+	ilong lowater;
 };
 
 // init memory stream
@@ -598,7 +604,10 @@ ilong ims_move(struct IMSTREAM *dst, struct IMSTREAM *src, ilong size);
 
 
 // strcasestr implementation
-const char* istrcasestr(const char* s1, const char* s2);  
+const char* istrcasestr(const char* s1, const char* s2);
+
+// strncpy implementation, ensure trailing '\0'
+char *istrncpy(char *dest, const char *src, size_t n);
 
 // strncasecmp implementation
 int istrncasecmp(const char* s1, const char* s2, size_t num);
@@ -669,7 +678,7 @@ char *istrdupopt(const char *text);
    if dst == NULL, returns how many bytes needed for encode (>=real) */
 ilong ibase64_encode(const void *src, ilong size, char *dst);
 
-/* decode a base64 string into data, returns data size 
+/* decode a base64 string into data, returns data size
    if dst == NULL, returns how many bytes needed for decode (>=real) */
 ilong ibase64_decode(const char *src, ilong size, void *dst);
 
@@ -677,7 +686,7 @@ ilong ibase64_decode(const char *src, ilong size, void *dst);
    if dst == NULL, returns how many bytes needed for encode (>=real) */
 ilong ibase32_encode(const void *src, ilong size, char *dst);
 
-/* decode a base32 string into data, returns data size 
+/* decode a base32 string into data, returns data size
    if dst == NULL, returns how many bytes needed for decode (>=real) */
 ilong ibase32_decode(const char *src, ilong size, void *dst);
 
@@ -685,7 +694,7 @@ ilong ibase32_decode(const char *src, ilong size, void *dst);
    the 'dst' output size is (2 * size). '\0' isn't appended */
 ilong ibase16_encode(const void *src, ilong size, char *dst);
 
-/* decode a base16 string into data, returns data size 
+/* decode a base16 string into data, returns data size
    if dst == NULL, returns how many bytes needed for decode (>=real) */
 ilong ibase16_decode(const char *src, ilong size, void *dst);
 
@@ -695,11 +704,11 @@ ilong ibase16_decode(const char *src, ilong size, void *dst);
 //====================================================================
 
 // rc4 init
-void icrypt_rc4_init(unsigned char *box, int *x, int *y, 
+void icrypt_rc4_init(unsigned char *box, int *x, int *y,
 	const unsigned char *key, int keylen);
 
 // rc4_crypt
-void icrypt_rc4_crypt(unsigned char *box, int *x, int *y, 
+void icrypt_rc4_crypt(unsigned char *box, int *x, int *y,
 	const unsigned char *src, unsigned char *dst, ilong size);
 
 
@@ -832,7 +841,7 @@ static inline const char *idecode32u_lsb(const char *p, IUINT32 *l) {
 	*l = *(const unsigned char*)(p + 2) + (*l << 8);
 	*l = *(const unsigned char*)(p + 1) + (*l << 8);
 	*l = *(const unsigned char*)(p + 0) + (*l << 8);
-#else 
+#else
 	memcpy(l, p, 4);
 #endif
 	p += 4;
@@ -857,7 +866,7 @@ static inline char *iencode32u_msb(char *p, IUINT32 l) {
 static inline const char *idecode32u_msb(const char *p, IUINT32 *l) {
 #if IWORDS_BIG_ENDIAN && (!IWORDS_MUST_ALIGN)
 	memcpy(l, p, 4);
-#else 
+#else
 	*l = *(const unsigned char*)(p + 0);
 	*l = *(const unsigned char*)(p + 1) + (*l << 8);
 	*l = *(const unsigned char*)(p + 2) + (*l << 8);
@@ -1070,6 +1079,7 @@ static inline const char *idecodestr(const char *p, char *str, ilong maxlen) {
 	IUINT32 size;
 	const char *ret;
 	idecode32u_lsb(p, &size);
+	if (size > 0x7fffffff) return NULL; // sanity check
 	if (maxlen <= 0) maxlen = size + 1;
 	ret = idecodes(p, str, &maxlen);
 	str[maxlen < (ilong)size ? maxlen - 1 : (ilong)size] = 0;
@@ -1173,7 +1183,7 @@ void iposix_msg_push(struct IMSTREAM *queue, IINT32 msg, IINT32 wparam,
 		IINT32 lparam, const void *data, IINT32 size);
 
 // read message from stream
-IINT32 iposix_msg_read(struct IMSTREAM *queue, IINT32 *msg, 
+IINT32 iposix_msg_read(struct IMSTREAM *queue, IINT32 *msg,
 		IINT32 *wparam, IINT32 *lparam, void *data, IINT32 maxsize);
 
 
@@ -1203,11 +1213,11 @@ static inline char *iencodeu(char *ptr, IUINT64 v)
 		return ptr + 2;
 	p[1] |= 0x80;
 	p[2] = (unsigned char)((v >> 14) & 0x7f);
-	if (v <= IUINT64_MASK(21)) 
+	if (v <= IUINT64_MASK(21))
 		return ptr + 3;
 	p[2] |= 0x80;
 	p[3] = (unsigned char)((v >> 21) & 0x7f);
-	if (v <= IUINT64_MASK(28)) 
+	if (v <= IUINT64_MASK(28))
 		return ptr + 4;
 	p[3] |= 0x80;
 	p[4] = (unsigned char)((v >> 28) & 0x7f);
@@ -1300,23 +1310,53 @@ static inline const char *idecodeu(const char *ptr, IUINT64 *v) {
 	return ptr + 10;
 }
 
-// encode auto size integer
-static inline char *iencodei(char *p, IINT64 value) {
-	IUINT64 x, y;
-	memcpy(&y, &value, sizeof(y));
-	if (y & ((IUINT64)1 << 63)) x = ((~y) << 1) | 1;
-	else x = y << 1;
-	return iencodeu(p, x);
+// decode auto size unsigned integer with safety check
+static inline int idecodeu_safe(const char *ptr, int avail, IUINT64 *out) {
+	const unsigned char *p = (const unsigned char*)ptr;
+	IUINT64 x = 0;
+	int shift = 0;
+	int pos = 0;
+	while (pos < avail) {
+		unsigned char b = p[pos++];
+		x |= ((IUINT64)(b & 0x7f)) << shift;
+		if ((b & 0x80) == 0) {
+			if (out != NULL) out[0] = x;
+			return pos;
+		}
+		shift += 7;
+		if (shift >= 64) {
+			return -1;
+		}
+	}
+	return 0;
 }
 
-// decode auto size integer
+// encode auto size integer (zigzag encoded, same mapping as
+// result: 0 -> 0, -1 -> 1, 1 -> 2, -2 -> 3, ...)
+static inline char *iencodei(char *p, IINT64 value) {
+	IUINT64 x = (IUINT64)value;
+	IUINT64 u = (x << 1) ^ (IUINT64)(value >> 63);
+	return iencodeu(p, u);
+}
+
+// decode auto size integer (inverse zigzag)
 static inline const char *idecodei(const char *p, IINT64 *value) {
-	IUINT64 x, y;
-	p = idecodeu(p, &x);
-	if ((x & 1) == 0) y = x >> 1;
-	else y = ~(x >> 1);
-	memcpy(value, &y, sizeof(y));
+	IUINT64 u;
+	p = idecodeu(p, &u);
+	value[0] = (IINT64)((u >> 1) ^ (IUINT64)(0 - (u & 1)));
 	return p;
+}
+
+// decode auto size integer with safety check (zigzag decoding,
+// streaming safe counterpart of idecodei, see idecodeu_safe):
+// returns bytes consumed, 0 for incomplete data, -1 for malformed
+static inline int idecodei_safe(const char *ptr, int avail, IINT64 *out) {
+	IUINT64 u;
+	int hr = idecodeu_safe(ptr, avail, &u);
+	if (hr > 0 && out != NULL) {
+		out[0] = (IINT64)((u >> 1) ^ (IUINT64)(0 - (u & 1)));
+	}
+	return hr;
 }
 
 // swap byte order of int16
@@ -1451,17 +1491,21 @@ static inline void icrypt_xor_8(const void *s, void *d, ilong c, IUINT8 m) {
 static inline IUINT32 icrypt_checksum(const void *src, ilong size) {
 	const unsigned char *ptr = (const unsigned char*)src;
 	IUINT32 checksum = 0;
-	for (; size > 0; ptr++, size--) 
+	for (; size > 0; ptr++, size--)
 		checksum += ptr[0];
 	return checksum;
 }
 
-static inline void icrypt_xor_str(const void *src, void *dst, 
+static inline void icrypt_xor_str(const void *src, void *dst,
 		ilong size, const unsigned char *mask, int msize) {
 	const unsigned char *ptr = (const unsigned char*)src;
 	unsigned char *out = (unsigned char*)dst;
 	const unsigned char *mptr = mask;
 	const unsigned char *mend = mask + msize;
+	if (msize <= 0) {
+		if (dst != src) memcpy(dst, src, size);
+		return;
+	}
 	for (; size > 0; ptr++, out++, size--) {
 		out[0] = ptr[0] ^ mptr[0];
 		mptr++;

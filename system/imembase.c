@@ -14,7 +14,6 @@
 #include "imembase.h"
 
 #include <stddef.h>
-#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 
@@ -38,6 +37,7 @@
 void *(*__ihook_malloc)(size_t size) = NULL;
 void (*__ihook_free)(void *) = NULL;
 void *(*__ihook_realloc)(void *, size_t size) = NULL;
+void (*__ihook_panic)(const char *msg, const char *, int) = NULL;
 
 
 /* allocate memory with a custom allocator or system allocator */
@@ -76,6 +76,15 @@ void* internal_realloc(struct IALLOCATOR *allocator, void *ptr, size_t size)
 		return __ihook_realloc(ptr, size);
 	}
 	return realloc(ptr, size);
+}
+
+/* panic with a custom message, file and line number */
+void internal_panicat(const char *msg, const char *file, int line)
+{
+	if (__ihook_panic) {
+		__ihook_panic(msg, file, line);
+	}
+	abort();
 }
 
 
@@ -209,6 +218,7 @@ int iv_shrink(struct IVECTOR *v)
 int iv_push(struct IVECTOR *v, const void *data, size_t size)
 {
 	size_t current = v->size;
+	if (size > ((size_t)-1) - v->size) return -1;
 	if (iv_resize(v, current + size) != 0)
 		return -1;
 	if (data != NULL)
@@ -233,6 +243,7 @@ int iv_insert(struct IVECTOR *v, size_t pos, const void *data, size_t size)
 	size_t current = v->size;
 	if (pos > current)
 		return -1;
+	if (size > ((size_t)-1) - v->size) return -1;
 	if (iv_resize(v, current + size) != 0)
 		return -1;
 	if (pos < current) {
@@ -248,6 +259,7 @@ int iv_erase(struct IVECTOR *v, size_t pos, size_t size)
 {
 	size_t current = v->size;
 	if (pos >= current) return 0;
+	if (size > ((size_t)-1) - pos) return -1;
 	if (pos + size >= current) size = current - pos;
 	if (size == 0) return 0;
 	memmove(v->data + pos, v->data + pos + size, current - pos - size);
@@ -280,6 +292,9 @@ void imnode_init(struct IMEMNODE *mn, ilong nodesize, struct IALLOCATOR *ac)
 	struct IMEMNODE *mnode = mn;
 
 	ASSERTION(mnode != NULL);
+	ASSERTION(nodesize > 0);
+	if (nodesize <= 0) nodesize = 1;  /* fail-safe when ASSERTION is a no-op */
+
 	mnode->allocator = ac;
 
 	iv_init(&mnode->vprev, ac);
@@ -448,7 +463,7 @@ ilong imnode_new(struct IMEMNODE *mnode)
 {
 	ilong node, next;
 
-	assert(mnode);
+	ASSERTION(mnode);
 	if (mnode->list_open < 0) {
 		if (imnode_grow(mnode)) return -2;
 	}
@@ -478,9 +493,15 @@ void imnode_del(struct IMEMNODE *mnode, ilong index)
 {
 	ilong prev, next;
 
-	assert(mnode);
-	assert((index >= 0) && (index < mnode->node_max));
-	assert(IMNODE_MODE(mnode, index) != 0);
+	ASSERTION(mnode);
+	if (index < 0 || index >= mnode->node_max) {
+		ASSERTION((index >= 0) && (index < mnode->node_max));
+		return;
+	}
+	if (IMNODE_MODE(mnode, index) == 0) {
+		ASSERTION(IMNODE_MODE(mnode, index) != 0);
+		return;
+	}
 
 	next = IMNODE_NEXT(mnode, index);
 	prev = IMNODE_PREV(mnode, index);
@@ -509,12 +530,14 @@ ilong imnode_head(const struct IMEMNODE *mnode)
 /* get the next/prev node index in the close list */
 ilong imnode_next(const struct IMEMNODE *mnode, ilong index)
 {
+	if (index < 0) return -1;
 	return (mnode)? IMNODE_NEXT(mnode, index) : -1;
 }
 
 /* get the next/prev node index in the close list */
 ilong imnode_prev(const struct IMEMNODE *mnode, ilong index)
 {
+	if (index < 0) return -1;
 	return (mnode)? IMNODE_PREV(mnode, index) : -1;
 }
 
@@ -560,7 +583,7 @@ ib_vector *iv_create(void)
 /* destroy and free a vector */
 void iv_delete(ib_vector *vec)
 {
-	assert(vec);
+	ASSERTION(vec);
 	iv_destroy(vec);
 	ikmem_free(vec);
 }
@@ -579,7 +602,7 @@ ib_memnode *imnode_create(ilong nodesize, int grow_limit)
 /* destroy and free a memory node manager */
 void imnode_delete(ib_memnode *mnode)
 {
-	assert(mnode);
+	ASSERTION(mnode);
 	imnode_destroy(mnode);
 	ikmem_free(mnode);
 }
@@ -633,10 +656,7 @@ static void ib_array_update(ib_array *array)
 void ib_array_reserve(ib_array *array, size_t new_size)
 {
 	int hr = iv_obj_reserve(&array->vec, char*, new_size);
-	if (hr != 0) {
-		ASSERTION(hr == 0);
-		abort();
-	}
+	if (hr != 0) internal_panic("ib_array_reserve: out of memory");
 	ib_array_update(array);
 }
 
@@ -652,23 +672,26 @@ void** ib_array_ptr(ib_array *array)
 
 void* ib_array_index(ib_array *array, size_t index)
 {
-	ASSERTION(index < array->size);
+	if (index >= array->size) {
+		ASSERTION(index < array->size);
+		return NULL;
+	}
 	return array->items[index];
 }
 
 const void* ib_array_const_index(const ib_array *array, size_t index)
 {
-	ASSERTION(index < array->size);
+	if (index >= array->size) {
+		ASSERTION(index < array->size);
+		return NULL;
+	}
 	return array->items[index];
 }
 
 void ib_array_push(ib_array *array, void *item)
 {
 	int hr = iv_obj_push(&array->vec, void*, &item);
-	if (hr) {
-		ASSERTION(hr == 0);
-		abort();
-	}
+	if (hr) internal_panic("ib_array_push: out of memory");
 	ib_array_update(array);
 	array->size++;
 }
@@ -676,17 +699,17 @@ void ib_array_push(ib_array *array, void *item)
 void ib_array_push_left(ib_array *array, void *item)
 {
 	int hr = iv_obj_insert(&array->vec, void*, 0, &item);
-	if (hr) {
-		ASSERTION(hr == 0);
-		abort();
-	}
+	if (hr) internal_panic("ib_array_push_left: out of memory");
 	ib_array_update(array);
 	array->size++;
 }
 
 void ib_array_replace(ib_array *array, size_t index, void *item)
 {
-	ASSERTION(index < array->size);
+	if (index >= array->size) {
+		ASSERTION(index < array->size);
+		return;
+	}
 	if (array->fn_destroy) {
 		array->fn_destroy(array->items[index]);
 	}
@@ -705,9 +728,7 @@ void* ib_array_pop(ib_array *array)
 	item = array->items[array->size];
 	hr = iv_obj_resize(&array->vec, void*, array->size);
 	ib_array_update(array);
-	if (hr) {
-		ASSERTION(hr == 0);
-	}
+	if (hr) internal_panic("ib_array_pop: out of memory");
 	return item;
 }
 
@@ -723,15 +744,16 @@ void* ib_array_pop_left(ib_array *array)
 	item = array->items[0];
 	hr = iv_obj_erase(&array->vec, void*, 0, 1);
 	ib_array_update(array);
-	if (hr) {
-		ASSERTION(hr == 0);
-	}
+	if (hr) internal_panic("ib_array_pop_left: out of memory");
 	return item;
 }
 
 void ib_array_remove(ib_array *array, size_t index)
 {
-	ASSERTION(index < array->size);
+	if (index >= array->size) {
+		ASSERTION(index < array->size);
+		return;
+	}
 	if (array->fn_destroy) {
 		array->fn_destroy(array->items[index]);
 	}
@@ -752,19 +774,18 @@ void ib_array_clear(ib_array *array)
 	array->size = 0;
 	hr = iv_obj_resize(&array->vec, void*, array->size);
 	ib_array_update(array);
-	if (hr) {
-		ASSERTION(hr == 0);
-		abort();
-	}
+	if (hr) internal_panic("ib_array_clear: out of memory");
 }
 
 void ib_array_insert_before(ib_array *array, size_t index, void *item)
 {
-	int hr = iv_obj_insert(&array->vec, void*, index, &item);
-	if (hr) {
-		ASSERTION(hr == 0);
-		abort();
+	int hr;
+	if (index > array->size) {
+		ASSERTION(index <= array->size);
+		return;
 	}
+	hr = iv_obj_insert(&array->vec, void*, index, &item);
+	if (hr) internal_panic("ib_array_insert_before: out of memory");
 	ib_array_update(array);
 	array->size++;
 }
@@ -782,10 +803,7 @@ void* ib_array_pop_at(ib_array *array, size_t index)
 	hr = iv_obj_erase(&array->vec, void*, index, 1);
 	ib_array_update(array);
 	array->size--;
-	if (hr) {
-		ASSERTION(hr == 0);
-		abort();
-	}
+	if (hr) internal_panic("ib_array_pop_at: out of memory");
 	return item;
 }
 
@@ -1395,6 +1413,10 @@ void ib_fastbin_init(struct ib_fastbin *fb, size_t obj_size)
 {
 	const size_t align = sizeof(void*);
 	size_t need;
+	if (obj_size == 0) {
+		ASSERTION(obj_size > 0);
+		abort();
+	}
 	fb->start = NULL;
 	fb->endup = NULL;
 	fb->next = NULL;
@@ -1447,7 +1469,7 @@ void* ib_fastbin_new(struct ib_fastbin *fb)
 		size_t cur_page_size = fb->page_size;
 		char *page = (char*)ikmem_malloc(cur_page_size);
 		size_t lineptr = (size_t)page;
-		ASSERTION(page);
+		if (page == NULL) internal_panic("ib_fastbin_new: out of memory");
 		ib_write_ptr(page, fb->pages);
 		memcpy(page + sizeof(void*), &cur_page_size, sizeof(size_t));
 		fb->pages = page;
@@ -1501,6 +1523,15 @@ void ib_fastbin_del(struct ib_fastbin *fb, void *ptr)
 /*--------------------------------------------------------------------*/
 /* string                                                             */
 /*--------------------------------------------------------------------*/
+
+/* checked addition of two non-negative sizes, panic on overflow */
+static int _ib_string_size_add(int x, int y)
+{
+	if (y > IB_STRING_MAX_SIZE - x) {
+		internal_panic("ib_string: string size overflow");
+	}
+	return x + y;
+}
 
 /* initialize a string on the stack (no heap allocation for the struct) */
 void ib_string_init(ib_string *str)
@@ -1591,9 +1622,9 @@ static void _ib_string_set_capacity(ib_string *str, int capacity)
 		}
 	}
 	else {
-		char *ptr = (char*)ikmem_malloc(capacity + 2);
+		char *ptr = (char*)ikmem_malloc(((size_t)capacity) + 2);
 		int csize = (capacity < str->size) ? capacity : str->size;
-		ASSERTION(ptr);
+		if (ptr == NULL) internal_panic("ib_string: out of memory");
 		if (csize > 0) {
 			memcpy(ptr, str->ptr, csize);
 		}
@@ -1610,18 +1641,23 @@ static void _ib_string_set_capacity(ib_string *str, int capacity)
 ib_string* ib_string_resize(ib_string *str, int newsize)
 {
 	ASSERTION(str && newsize >= 0);
+	if (newsize < 0) return NULL;
 	if (newsize > str->capacity) {
-		int capacity = str->capacity * 2;
+		int capacity;
+		if (newsize > IB_STRING_MAX_SIZE) {
+			internal_panic("ib_string_resize: string size overflow");
+		}
+		capacity = (str->capacity > IB_STRING_MAX_SIZE / 2)?
+			IB_STRING_MAX_SIZE : str->capacity * 2;
 		if (capacity == 0) capacity = 8;
 		if (capacity < newsize) {
 			capacity = 8;
 			while (capacity < newsize) {
-				int next = capacity * 2;
-				if (next <= capacity) {  /* overflow */
-					ASSERTION(0);
-					return str;
+				if (capacity > IB_STRING_MAX_SIZE / 2) {
+					capacity = IB_STRING_MAX_SIZE;
+					break;
 				}
-				capacity = next;
+				capacity = capacity * 2;
 			}
 		}
 		_ib_string_set_capacity(str, capacity);
@@ -1634,6 +1670,9 @@ ib_string* ib_string_resize(ib_string *str, int newsize)
 ib_string* ib_string_reserve(ib_string *str, int newsize)
 {
 	int size = (newsize >= str->size)? newsize : str->size;
+	if (size > IB_STRING_MAX_SIZE) {
+		internal_panic("ib_string_reserve: string size overflow");
+	}
 	_ib_string_set_capacity(str, size);
 	return str;
 }
@@ -1666,7 +1705,8 @@ ib_string* ib_string_insert(ib_string *str, int pos,
 	if (pos < 0 || pos > str->size) {
 		return NULL;
 	}
-	ib_string_resize(str, str->size + size);
+	if (size < 0) return NULL;
+	ib_string_resize(str, _ib_string_size_add(current, size));
 	if (pos < current) {
 		memmove(str->ptr + pos + size, str->ptr + pos, current - pos);
 	}
@@ -1694,8 +1734,19 @@ ib_string* ib_string_erase(ib_string *str, int pos, int size)
 {
 	int current = str->size;
 	if (pos >= current) return NULL;
-	if (pos + size >= current) size = current - pos;
-	if (size == 0) return str;
+	if (size <= 0) {
+		/* overflow-free equivalent of (pos + size < 0) for size <= 0 */
+		if (pos < 0 || size < -pos) return NULL;
+		return str;
+	}
+	if (pos < 0) {
+		/* overflow-free equivalent of (pos + size < 0) for size > 0 */
+		if (pos < -size) return NULL;
+		size += pos;
+		pos = 0;
+	}
+	if (size >= current - pos) size = current - pos;
+	if (size <= 0) return str;
 	memmove(str->ptr + pos, str->ptr + pos + size, current - pos - size);
 	return ib_string_resize(str, current - size);
 }
@@ -1780,8 +1831,14 @@ ib_string* ib_string_rewrite(ib_string *str, int pos, const char *src)
 ib_string* ib_string_rewrite_size(ib_string *str, int pos,
 		const char *src, int size)
 {
-	if (pos < 0) size += pos, pos = 0;
-	if (pos + size >= str->size) size = str->size - pos;
+	if (size < 0) size = (src)? ((int)strlen(src)) : 0;
+	if (pos < 0) {
+		size += pos;           /* clip the bytes before position 0 */
+		if (size <= 0) return str;
+		if (src) src -= pos;   /* skip the bytes clipped by pos < 0 */
+		pos = 0;
+	}
+	if (size >= str->size - pos) size = str->size - pos;
 	if (size <= 0) return str;
 	if (src) {
 		memcpy(str->ptr + pos, src, size);
@@ -1850,6 +1907,12 @@ ib_array* ib_string_split(const ib_string *str, const char *sep, int len)
 	if (len == 0) {
 		return NULL;
 	}
+	else if (str == NULL || sep == NULL) {
+		return NULL;
+	}
+	else if (sep[0] == 0) {
+		return NULL;
+	}
 	else {
 		ib_array *array = ib_array_new((void (*)(void*))ib_string_delete);
 		int start = 0;
@@ -1915,8 +1978,8 @@ ib_string* ib_string_join(const ib_array *array, const char *sep, int len)
 		len = (len >= 0)? len : (int)strlen(sep);
 		for (i = 0; i < array->size; i++) {
 			ib_string *item = (ib_string*)array->items[i];
-			size += item->size;
-			if (i > 0) size += len;
+			size = _ib_string_size_add(size, item->size);
+			if (i > 0) size = _ib_string_size_add(size, len);
 		}
 		ib_string_resize(str, (int)size);
 		ptr = str->ptr;
@@ -1986,7 +2049,10 @@ ib_string* ib_string_replace(const ib_string *str, const char *src,
 	if (srcsize < 0) srcsize = (int)strlen(src);
 	if (dstsize < 0) dstsize = (int)strlen(dst);
 	if (srcsize == 0) {
-		ib_string_reserve(newstr, str->size + (str->size + 1) * dstsize);
+		/* the reserve is only a hint: skip it if the estimate overflows */
+		if (dstsize <= (IB_STRING_MAX_SIZE - str->size) / (str->size + 1)) {
+			ib_string_reserve(newstr, str->size + (str->size + 1) * dstsize);
+		}
 		ib_string_append_size(newstr, dst, dstsize);
 		for (pos = 0; pos < str->size; pos++) {
 			ib_string_append_c(newstr, str->ptr[pos]);
@@ -2131,7 +2197,10 @@ void ib_hash_erase(struct ib_hash_table *ht, struct ib_hash_node *node)
 {
 	struct ib_hash_index *index;
 	ASSERTION(node && ht);
-	ASSERTION(!ib_node_empty(&node->avlnode));
+	if (ib_node_empty(&node->avlnode)) {
+		ASSERTION(!ib_node_empty(&node->avlnode));
+		return;
+	}
 	index = &ht->index[node->hash & ht->index_mask];
 	if (index->avlroot.node == &node->avlnode && node->avlnode.height == 1) {
 		index->avlroot.node = NULL;
@@ -2485,7 +2554,7 @@ static inline void ib_map_rehash(struct ib_hash_map *hm,
 			while (need < upper) need <<= 1;
 			size = need * sizeof(struct ib_hash_index);
 			ptr = ikmem_malloc(size);
-			ASSERTION(ptr);
+			if (ptr == NULL) internal_panic("ib_map_rehash: out of memory");
 			ptr = ib_hash_swap(&hm->ht, ptr, size);
 			if (ptr) {
 				ikmem_free(ptr);
@@ -2510,7 +2579,7 @@ static inline void ib_map_rehash(struct ib_hash_map *hm,
 		else {
 			size_t size = need * sizeof(struct ib_hash_index);
 			void *ptr = ikmem_malloc(size);
-			ASSERTION(ptr);
+			if (ptr == NULL) internal_panic("ib_map_rehash: out of memory");
 			ptr = ib_hash_swap(&hm->ht, ptr, size);
 			if (ptr) {
 				ikmem_free(ptr);
@@ -2548,8 +2617,14 @@ void *ib_map_get(struct ib_hash_map *hm, const void *key)
 
 void ib_map_erase(struct ib_hash_map *hm, struct ib_hash_entry *entry)
 {
-	ASSERTION(entry);
-	ASSERTION(!ib_node_empty(&(entry->node.avlnode)));
+	if (entry == NULL) {
+		ASSERTION(entry);
+		return;
+	}
+	if (ib_node_empty(&(entry->node.avlnode))) {
+		ASSERTION(!ib_node_empty(&(entry->node.avlnode)));
+		return;
+	}
 	ib_hash_erase(&hm->ht, &entry->node);
 	ib_node_init(&(entry->node.avlnode));
 	if (hm->key_destroy) hm->key_destroy(entry->node.key);
@@ -2557,7 +2632,6 @@ void ib_map_erase(struct ib_hash_map *hm, struct ib_hash_entry *entry)
 	entry->node.key = NULL;
 	entry->value = NULL;
 	ib_fastbin_del(&hm->fb, entry);
-	ib_map_rehash(hm, hm->ht.count, 1);
 }
 
 int ib_map_remove(struct ib_hash_map *hm, const void *key)
@@ -2599,6 +2673,10 @@ void ib_map_clear(struct ib_hash_map *hm)
 	}
 	hm->ht.count = 0;
 	ASSERTION(hm->ht.count == 0);
+}
+
+void ib_map_shrink(struct ib_hash_map *hm)
+{
 	ib_map_rehash(hm, hm->ht.count, 1);
 }
 
@@ -2744,7 +2822,8 @@ struct ib_hash_entry *ib_map_find_int(struct ib_hash_map *hm, ilong key)
 	return hr;
 }
 
-struct ib_hash_entry *ib_map_find_str(struct ib_hash_map *hm, const ib_string *key)
+struct ib_hash_entry *ib_map_find_str(struct ib_hash_map *hm, 
+		const ib_string *key)
 {
 	struct ib_hash_entry *hr;
 	void *kk = (void*)key;
@@ -2785,7 +2864,7 @@ void* ib_hash_cstr_copy(const void *cstr)
 	const char *src = (const char*)cstr;
 	size_t size = strlen(src);
 	char *dst = (char*)ikmem_malloc(size + 1);
-	ASSERTION(dst != NULL);
+	if (dst == NULL) internal_panic("ib_hash_cstr_copy: out of memory");
 	memcpy(dst, src, size);
 	dst[size] = '\0';
 	return dst;
@@ -2923,7 +3002,7 @@ static void* ib_zone_alloc(struct IALLOCATOR *allocator, size_t size)
 {
 	struct ib_zone *zone = (struct ib_zone*)allocator->udata;
 	char *obj = (char*)ib_zone_next(zone, size + sizeof(size_t));
-	ASSERTION(obj != NULL);
+	if (obj == NULL) return NULL;
 	memcpy(obj, &size, sizeof(size_t));
 	return obj + sizeof(size_t);
 }

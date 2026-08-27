@@ -32,7 +32,7 @@ void ib_object_init_nil(ib_object *obj)
 	obj->size = 0;
 	obj->capacity = 0;
 	obj->flags = 0;
-	obj->integer = 0;
+	obj->u.integer = 0;
 }
 
 // initialize ib_object to bool type
@@ -42,7 +42,7 @@ void ib_object_init_bool(ib_object *obj, int val)
 	obj->size = 0;
 	obj->capacity = 0;
 	obj->flags = 0;
-	obj->integer = (val) ? 1 : 0;
+	obj->u.integer = (val) ? 1 : 0;
 }
 
 // initialize ib_object to int type
@@ -52,7 +52,7 @@ void ib_object_init_int(ib_object *obj, IINT64 val)
 	obj->size = 0;
 	obj->capacity = 0;
 	obj->flags = 0;
-	obj->integer = val;
+	obj->u.integer = val;
 }
 
 // initialize ib_object to double type
@@ -62,11 +62,11 @@ void ib_object_init_double(ib_object *obj, double val)
 	obj->size = 0;
 	obj->capacity = 0;
 	obj->flags = 0;
-	obj->dval = val;
+	obj->u.dval = val;
 }
 
 // initialize ib_object to string type, won't involve any memory
-// allocation, just set obj->str to str pointer. Negative size and
+// allocation, just set obj->u.str to str pointer. Negative size and
 // NULL with positive size are clamped to 0.
 void ib_object_init_str(ib_object *obj, const char *str, int size)
 {
@@ -74,13 +74,13 @@ void ib_object_init_str(ib_object *obj, const char *str, int size)
 	obj->flags = 0;
 	if (size < 0) size = 0;
 	if (str == NULL && size > 0) size = 0;
-	obj->str = (unsigned char*)str;
+	obj->u.str = (unsigned char*)str;
 	obj->size = size;
 	obj->capacity = 0;
 }
 
 // initialize ib_object to binary type, won't involve any memory
-// allocation, just set obj->str to bin pointer. Negative size and
+// allocation, just set obj->u.str to bin pointer. Negative size and
 // NULL with positive size are clamped to 0.
 void ib_object_init_bin(ib_object *obj, const void *bin, int size)
 {
@@ -88,31 +88,31 @@ void ib_object_init_bin(ib_object *obj, const void *bin, int size)
 	obj->flags = 0;
 	if (size < 0) size = 0;
 	if (bin == NULL && size > 0) size = 0;
-	obj->str = (unsigned char*)bin;
+	obj->u.str = (unsigned char*)bin;
 	obj->size = size;
 	obj->capacity = 0;
 }
 
 // initialize ib_object to array type, won't involve any memory
-// allocation, just set obj->element to element pointer.
+// allocation, just set obj->u.element to element pointer.
 void ib_object_init_array(ib_object *obj, ib_object **element, int size)
 {
 	obj->type = IB_OBJECT_ARRAY;
 	obj->flags = 0;
 	if (size < 0) size = 0;
-	obj->element = element;
+	obj->u.element = element;
 	obj->size = size;
 	obj->capacity = 0;
 }
 
 // initialize ib_object to map type, won't involve any memory
-// allocation, just set obj->element to element pointer.
+// allocation, just set obj->u.element to element pointer.
 void ib_object_init_map(ib_object *obj, ib_object **element, int size)
 {
 	obj->type = IB_OBJECT_MAP;
 	obj->flags = 0;
 	if (size < 0) size = 0;
-	obj->element = element;
+	obj->u.element = element;
 	obj->size = size;
 	obj->capacity = 0;
 }
@@ -146,15 +146,15 @@ static int ib_object_element_grow(struct IALLOCATOR *alloc,
 		slots = newcap * 2;
 	}
 	bytes = (size_t)slots * sizeof(ib_object*);
-	if (obj->element == NULL) {
+	if (obj->u.element == NULL) {
 		newarr = (ib_object**)internal_malloc(alloc, bytes);
 		if (newarr == NULL) return -1;
 	}
 	else {
-		newarr = (ib_object**)internal_realloc(alloc, obj->element, bytes);
+		newarr = (ib_object**)internal_realloc(alloc, obj->u.element, bytes);
 		if (newarr == NULL) return -1;
 	}
-	obj->element = newarr;
+	obj->u.element = newarr;
 	obj->capacity = newcap;
 	return 0;
 }
@@ -222,7 +222,7 @@ ib_object *ib_object_new_str(struct IALLOCATOR *alloc,
 	buf[len] = '\0';
 	obj->type = IB_OBJECT_STR;
 	obj->flags = IB_OBJECT_FLAG_DYNAMIC | IB_OBJECT_FLAG_OWNED;
-	obj->str = buf;
+	obj->u.str = buf;
 	obj->size = len;
 	obj->capacity = len;
 	return obj;
@@ -251,7 +251,7 @@ ib_object *ib_object_new_bin(struct IALLOCATOR *alloc,
 	buf[len] = '\0';
 	obj->type = IB_OBJECT_BIN;
 	obj->flags = IB_OBJECT_FLAG_DYNAMIC | IB_OBJECT_FLAG_OWNED;
-	obj->str = buf;
+	obj->u.str = buf;
 	obj->size = len;
 	obj->capacity = len;
 	return obj;
@@ -265,7 +265,7 @@ ib_object *ib_object_new_array(struct IALLOCATOR *alloc, int capacity)
 	obj->flags = IB_OBJECT_FLAG_DYNAMIC | IB_OBJECT_FLAG_OWNED;
 	obj->size = 0;
 	obj->capacity = 0;
-	obj->element = NULL;
+	obj->u.element = NULL;
 	if (capacity > 0) {
 		if (ib_object_element_grow(alloc, obj, capacity) != 0) {
 			internal_free(alloc, obj);
@@ -283,7 +283,7 @@ ib_object *ib_object_new_map(struct IALLOCATOR *alloc, int capacity)
 	obj->flags = IB_OBJECT_FLAG_DYNAMIC | IB_OBJECT_FLAG_OWNED;
 	obj->size = 0;
 	obj->capacity = 0;
-	obj->element = NULL;
+	obj->u.element = NULL;
 	if (capacity > 0) {
 		if (ib_object_element_grow(alloc, obj, capacity) != 0) {
 			internal_free(alloc, obj);
@@ -308,30 +308,30 @@ void ib_object_delete(struct IALLOCATOR *alloc, ib_object *obj)
 	switch (obj->type) {
 	case IB_OBJECT_STR:
 	case IB_OBJECT_BIN:
-		if ((obj->flags & IB_OBJECT_FLAG_OWNED) && obj->str != NULL) {
-			internal_free(alloc, obj->str);
+		if ((obj->flags & IB_OBJECT_FLAG_OWNED) && obj->u.str != NULL) {
+			internal_free(alloc, obj->u.str);
 		}
 		break;
 	case IB_OBJECT_ARRAY:
 		if (obj->flags & IB_OBJECT_FLAG_OWNED) {
-			if (obj->element != NULL) {
+			if (obj->u.element != NULL) {
 				int i;
 				for (i = 0; i < obj->size; i++) {
-					ib_object_delete(alloc, obj->element[i]);
+					ib_object_delete(alloc, obj->u.element[i]);
 				}
-				internal_free(alloc, obj->element);
+				internal_free(alloc, obj->u.element);
 			}
 		}
 		break;
 	case IB_OBJECT_MAP:
 		if (obj->flags & IB_OBJECT_FLAG_OWNED) {
-			if (obj->element != NULL) {
+			if (obj->u.element != NULL) {
 				int i;
 				for (i = 0; i < obj->size; i++) {
-					ib_object_delete(alloc, obj->element[i * 2]);
-					ib_object_delete(alloc, obj->element[i * 2 + 1]);
+					ib_object_delete(alloc, obj->u.element[i * 2]);
+					ib_object_delete(alloc, obj->u.element[i * 2 + 1]);
 				}
-				internal_free(alloc, obj->element);
+				internal_free(alloc, obj->u.element);
 			}
 		}
 		break;
@@ -352,25 +352,25 @@ ib_object *ib_object_duplicate(struct IALLOCATOR *alloc,
 	case IB_OBJECT_NIL:
 		return ib_object_new_nil(alloc);
 	case IB_OBJECT_BOOL:
-		return ib_object_new_bool(alloc, (int)obj->integer);
+		return ib_object_new_bool(alloc, (int)obj->u.integer);
 	case IB_OBJECT_INT:
-		return ib_object_new_int(alloc, obj->integer);
+		return ib_object_new_int(alloc, obj->u.integer);
 	case IB_OBJECT_DOUBLE:
-		return ib_object_new_double(alloc, obj->dval);
+		return ib_object_new_double(alloc, obj->u.dval);
 	case IB_OBJECT_STR:
-		return ib_object_new_str(alloc, (const char*)obj->str, obj->size);
+		return ib_object_new_str(alloc, (const char*)obj->u.str, obj->size);
 	case IB_OBJECT_BIN:
-		return ib_object_new_bin(alloc, obj->str, obj->size);
+		return ib_object_new_bin(alloc, obj->u.str, obj->size);
 	case IB_OBJECT_ARRAY: {
 		ib_object *arr = ib_object_new_array(alloc, obj->size);
 		if (arr == NULL) return NULL;
 		for (i = 0; i < obj->size; i++) {
-			ib_object *child = ib_object_duplicate(alloc, obj->element[i]);
+			ib_object *child = ib_object_duplicate(alloc, obj->u.element[i]);
 			if (child == NULL) {
 				ib_object_delete(alloc, arr);
 				return NULL;
 			}
-			arr->element[i] = child;
+			arr->u.element[i] = child;
 			arr->size++;
 		}
 		return arr;
@@ -379,17 +379,17 @@ ib_object *ib_object_duplicate(struct IALLOCATOR *alloc,
 		ib_object *map = ib_object_new_map(alloc, obj->size);
 		if (map == NULL) return NULL;
 		for (i = 0; i < obj->size; i++) {
-			ib_object *k = ib_object_duplicate(alloc, obj->element[i * 2]);
+			ib_object *k = ib_object_duplicate(alloc, obj->u.element[i * 2]);
 			ib_object *v = ib_object_duplicate(alloc,
-					obj->element[i * 2 + 1]);
+					obj->u.element[i * 2 + 1]);
 			if (k == NULL || v == NULL) {
 				if (k) ib_object_delete(alloc, k);
 				if (v) ib_object_delete(alloc, v);
 				ib_object_delete(alloc, map);
 				return NULL;
 			}
-			map->element[i * 2] = k;
-			map->element[i * 2 + 1] = v;
+			map->u.element[i * 2] = k;
+			map->u.element[i * 2 + 1] = v;
 			map->size++;
 		}
 		if (obj->flags & IB_OBJECT_FLAG_SORTED)
@@ -419,24 +419,25 @@ int ib_object_compare(const ib_object *a, const ib_object *b)
 		return 0;
 	case IB_OBJECT_BOOL:
 	case IB_OBJECT_INT:
-		return (a->integer > b->integer) - (a->integer < b->integer);
+		return (a->u.integer > b->u.integer) - (a->u.integer < b->u.integer);
 	case IB_OBJECT_DOUBLE:
 		{
-			int a_nan = (a->dval != a->dval);
-			int b_nan = (b->dval != b->dval);
+			int a_nan = (a->u.dval != a->u.dval);
+			int b_nan = (b->u.dval != b->u.dval);
 			if (a_nan || b_nan) {
 				if (a_nan && b_nan) return 0;
 				return a_nan ? -1 : 1;
 			}
-			if (a->dval < b->dval) return -1;
-			if (a->dval > b->dval) return 1;
+			if (a->u.dval < b->u.dval) return -1;
+			if (a->u.dval > b->u.dval) return 1;
 			return 0;
 		}
 	case IB_OBJECT_STR:
 	case IB_OBJECT_BIN:
 	{
 		int minlen = (a->size < b->size) ? a->size : b->size;
-		int cmp = (minlen > 0) ? memcmp(a->str, b->str, (size_t)minlen) : 0;
+		int cmp = (minlen > 0) ?
+			memcmp(a->u.str, b->u.str, (size_t)minlen) : 0;
 		if (cmp != 0) return (cmp > 0) - (cmp < 0);
 		return (a->size > b->size) - (a->size < b->size);
 	}
@@ -460,17 +461,17 @@ int ib_object_equal(const ib_object *a, const ib_object *b)
 		return 1;
 	case IB_OBJECT_BOOL:
 	case IB_OBJECT_INT:
-		return a->integer == b->integer;
+		return a->u.integer == b->u.integer;
 	case IB_OBJECT_DOUBLE:
-		return a->dval == b->dval;
+		return a->u.dval == b->u.dval;
 	case IB_OBJECT_STR:
 	case IB_OBJECT_BIN:
 		if (a->size != b->size) return 0;
-		return memcmp(a->str, b->str, (size_t)a->size) == 0;
+		return memcmp(a->u.str, b->u.str, (size_t)a->size) == 0;
 	case IB_OBJECT_ARRAY:
 		if (a->size != b->size) return 0;
 		for (i = 0; i < a->size; i++) {
-			if (!ib_object_equal(a->element[i], b->element[i]))
+			if (!ib_object_equal(a->u.element[i], b->u.element[i]))
 				return 0;
 		}
 		return 1;
@@ -501,7 +502,7 @@ IUINT32 ib_object_hash(const ib_object *obj)
 	case IB_OBJECT_BOOL:
 	case IB_OBJECT_INT:
 	{
-		IUINT64 v = (IUINT64)obj->integer;
+		IUINT64 v = (IUINT64)obj->u.integer;
 		h = inc_hash_fnv1a(h, (IUINT32)(v & 0xffffffff));
 		h = inc_hash_fnv1a(h, (IUINT32)(v >> 32));
 		break;
@@ -509,7 +510,7 @@ IUINT32 ib_object_hash(const ib_object *obj)
 	case IB_OBJECT_DOUBLE:
 	{
 		IUINT64 v;
-		memcpy(&v, &obj->dval, sizeof(v));
+		memcpy(&v, &obj->u.dval, sizeof(v));
 		h = inc_hash_fnv1a(h, (IUINT32)(v & 0xffffffff));
 		h = inc_hash_fnv1a(h, (IUINT32)(v >> 32));
 		break;
@@ -518,12 +519,12 @@ IUINT32 ib_object_hash(const ib_object *obj)
 	case IB_OBJECT_BIN:
 		h = inc_hash_fnv1a(h, (IUINT32)obj->size);
 		for (i = 0; i < obj->size; i++) {
-			h = inc_hash_fnv1a(h, (IUINT32)obj->str[i]);
+			h = inc_hash_fnv1a(h, (IUINT32)obj->u.str[i]);
 		}
 		break;
 	case IB_OBJECT_ARRAY:
 		for (i = 0; i < obj->size; i++) {
-			h = inc_hash_fnv1a(h, ib_object_hash(obj->element[i]));
+			h = inc_hash_fnv1a(h, ib_object_hash(obj->u.element[i]));
 		}
 		break;
 	case IB_OBJECT_MAP:
@@ -559,7 +560,7 @@ int ib_object_array_push(struct IALLOCATOR *alloc,
 	assert(arr->flags & IB_OBJECT_FLAG_OWNED);
 	assert(item == NULL || (item->flags & IB_OBJECT_FLAG_DYNAMIC));
 	if (ib_object_element_grow(alloc, arr, 1) != 0) return -1;
-	arr->element[arr->size] = item;
+	arr->u.element[arr->size] = item;
 	arr->size++;
 	return 0;
 }
@@ -574,9 +575,9 @@ int ib_object_array_insert(struct IALLOCATOR *alloc,
 	if (index < 0 || index > arr->size) return -1;
 	if (ib_object_element_grow(alloc, arr, 1) != 0) return -1;
 	for (i = arr->size; i > index; i--) {
-		arr->element[i] = arr->element[i - 1];
+		arr->u.element[i] = arr->u.element[i - 1];
 	}
-	arr->element[index] = item;
+	arr->u.element[index] = item;
 	arr->size++;
 	return 0;
 }
@@ -586,7 +587,7 @@ ib_object *ib_object_array_get(const ib_object *arr, int index)
 	if (arr == NULL) return NULL;
 	assert(arr->type == IB_OBJECT_ARRAY);
 	if (index < 0 || index >= arr->size) return NULL;
-	return arr->element[index];
+	return arr->u.element[index];
 }
 
 ib_object *ib_object_array_detach(ib_object *arr, int index)
@@ -597,11 +598,11 @@ ib_object *ib_object_array_detach(ib_object *arr, int index)
 	assert(arr->type == IB_OBJECT_ARRAY);
 	assert(arr->flags & IB_OBJECT_FLAG_OWNED);
 	if (index < 0 || index >= arr->size) return NULL;
-	item = arr->element[index];
+	item = arr->u.element[index];
 	for (i = index; i < arr->size - 1; i++) {
-		arr->element[i] = arr->element[i + 1];
+		arr->u.element[i] = arr->u.element[i + 1];
 	}
-	arr->element[arr->size - 1] = NULL;
+	arr->u.element[arr->size - 1] = NULL;
 	arr->size--;
 	return item;
 }
@@ -624,8 +625,8 @@ ib_object *ib_object_array_replace(ib_object *arr,
 	assert(arr->flags & IB_OBJECT_FLAG_OWNED);
 	assert(item == NULL || (item->flags & IB_OBJECT_FLAG_DYNAMIC));
 	if (index < 0 || index >= arr->size) return NULL;
-	old = arr->element[index];
-	arr->element[index] = item;
+	old = arr->u.element[index];
+	arr->u.element[index] = item;
 	return old;
 }
 
@@ -633,11 +634,11 @@ void ib_object_array_clear(struct IALLOCATOR *alloc, ib_object *arr)
 {
 	assert(arr != NULL && arr->type == IB_OBJECT_ARRAY);
 	assert(arr->flags & IB_OBJECT_FLAG_OWNED);
-	if (arr->element != NULL) {
+	if (arr->u.element != NULL) {
 		int i;
 		for (i = 0; i < arr->size; i++) {
-			ib_object_delete(alloc, arr->element[i]);
-			arr->element[i] = NULL;
+			ib_object_delete(alloc, arr->u.element[i]);
+			arr->u.element[i] = NULL;
 		}
 	}
 	arr->size = 0;
@@ -650,8 +651,8 @@ ib_object *ib_object_array_pop(ib_object *arr)
 	assert(arr->type == IB_OBJECT_ARRAY);
 	assert(arr->flags & IB_OBJECT_FLAG_OWNED);
 	if (arr->size <= 0) return NULL;
-	item = arr->element[arr->size - 1];
-	arr->element[arr->size - 1] = NULL;
+	item = arr->u.element[arr->size - 1];
+	arr->u.element[arr->size - 1] = NULL;
 	arr->size--;
 	return item;
 }
@@ -693,7 +694,7 @@ int ib_object_map_sort(ib_object *map)
 		map->flags |= IB_OBJECT_FLAG_SORTED;
 		return 0;
 	}
-	qsort(map->element, (size_t)map->size,
+	qsort(map->u.element, (size_t)map->size,
 			2 * sizeof(ib_object*), ib_object_map_pair_compare);
 	map->flags |= IB_OBJECT_FLAG_SORTED;
 	return 0;
@@ -709,7 +710,7 @@ static int ib_object_map_find(const ib_object *map, const ib_object *key)
 		int lo = 0, hi = map->size - 1;
 		while (lo <= hi) {
 			int mid = lo + ((hi - lo) >> 1);
-			ib_object *k = map->element[mid * 2];
+			ib_object *k = map->u.element[mid * 2];
 			int cmp = ib_object_compare(k, key);
 			if (cmp == 0) return mid;
 			if (cmp < 0) lo = mid + 1;
@@ -719,7 +720,7 @@ static int ib_object_map_find(const ib_object *map, const ib_object *key)
 	}
 	// linear search fallback
 	for (i = 0; i < map->size; i++) {
-		ib_object *k = map->element[i * 2];
+		ib_object *k = map->u.element[i * 2];
 		if (ib_object_compare(k, key) == 0) {
 			return i;
 		}
@@ -736,8 +737,8 @@ int ib_object_map_add(struct IALLOCATOR *alloc,
 	assert(key->flags & IB_OBJECT_FLAG_DYNAMIC);
 	assert(val == NULL || (val->flags & IB_OBJECT_FLAG_DYNAMIC));
 	if (ib_object_element_grow(alloc, map, 1) != 0) return -1;
-	map->element[map->size * 2] = key;
-	map->element[map->size * 2 + 1] = val;
+	map->u.element[map->size * 2] = key;
+	map->u.element[map->size * 2 + 1] = val;
 	map->size++;
 	map->flags &= ~IB_OBJECT_FLAG_SORTED;
 	return 0;
@@ -750,7 +751,7 @@ ib_object *ib_object_map_get(const ib_object *map, const ib_object *key)
 	assert(map->type == IB_OBJECT_MAP);
 	idx = ib_object_map_find(map, key);
 	if (idx < 0) return NULL;
-	return map->element[idx * 2 + 1];
+	return map->u.element[idx * 2 + 1];
 }
 
 int ib_object_map_erase(struct IALLOCATOR *alloc,
@@ -762,15 +763,15 @@ int ib_object_map_erase(struct IALLOCATOR *alloc,
 	assert(map->flags & IB_OBJECT_FLAG_OWNED);
 	idx = ib_object_map_find(map, key);
 	if (idx < 0) return -1;
-	k = map->element[idx * 2];
-	v = map->element[idx * 2 + 1];
+	k = map->u.element[idx * 2];
+	v = map->u.element[idx * 2 + 1];
 	// shift remaining pairs left
 	for (i = idx; i < map->size - 1; i++) {
-		map->element[i * 2] = map->element[(i + 1) * 2];
-		map->element[i * 2 + 1] = map->element[(i + 1) * 2 + 1];
+		map->u.element[i * 2] = map->u.element[(i + 1) * 2];
+		map->u.element[i * 2 + 1] = map->u.element[(i + 1) * 2 + 1];
 	}
-	map->element[(map->size - 1) * 2] = NULL;
-	map->element[(map->size - 1) * 2 + 1] = NULL;
+	map->u.element[(map->size - 1) * 2] = NULL;
+	map->u.element[(map->size - 1) * 2 + 1] = NULL;
 	map->size--;
 	ib_object_delete(alloc, k);
 	ib_object_delete(alloc, v);
@@ -789,14 +790,14 @@ ib_object *ib_object_map_detach(struct IALLOCATOR *alloc,
 	assert(map->flags & IB_OBJECT_FLAG_OWNED);
 	idx = ib_object_map_find(map, key);
 	if (idx < 0) return NULL;
-	k = map->element[idx * 2];
-	v = map->element[idx * 2 + 1];
+	k = map->u.element[idx * 2];
+	v = map->u.element[idx * 2 + 1];
 	for (i = idx; i < map->size - 1; i++) {
-		map->element[i * 2] = map->element[(i + 1) * 2];
-		map->element[i * 2 + 1] = map->element[(i + 1) * 2 + 1];
+		map->u.element[i * 2] = map->u.element[(i + 1) * 2];
+		map->u.element[i * 2 + 1] = map->u.element[(i + 1) * 2 + 1];
 	}
-	map->element[(map->size - 1) * 2] = NULL;
-	map->element[(map->size - 1) * 2 + 1] = NULL;
+	map->u.element[(map->size - 1) * 2] = NULL;
+	map->u.element[(map->size - 1) * 2 + 1] = NULL;
 	map->size--;
 	ib_object_delete(alloc, k);
 	return v;
@@ -817,15 +818,15 @@ int ib_object_map_set(struct IALLOCATOR *alloc,
 	assert(val == NULL || (val->flags & IB_OBJECT_FLAG_DYNAMIC));
 	idx = ib_object_map_find(map, key);
 	if (idx >= 0) {
-		ib_object *old_val = map->element[idx * 2 + 1];
-		map->element[idx * 2 + 1] = val;
+		ib_object *old_val = map->u.element[idx * 2 + 1];
+		map->u.element[idx * 2 + 1] = val;
 		ib_object_delete(alloc, key);
 		ib_object_delete(alloc, old_val);
 		return 0;
 	}
 	if (ib_object_element_grow(alloc, map, 1) != 0) return -1;
-	map->element[map->size * 2] = key;
-	map->element[map->size * 2 + 1] = val;
+	map->u.element[map->size * 2] = key;
+	map->u.element[map->size * 2 + 1] = val;
 	map->size++;
 	map->flags &= ~IB_OBJECT_FLAG_SORTED;
 	return 0;
@@ -835,13 +836,13 @@ void ib_object_map_clear(struct IALLOCATOR *alloc, ib_object *map)
 {
 	assert(map != NULL && map->type == IB_OBJECT_MAP);
 	assert(map->flags & IB_OBJECT_FLAG_OWNED);
-	if (map->element != NULL) {
+	if (map->u.element != NULL) {
 		int i;
 		for (i = 0; i < map->size; i++) {
-			ib_object_delete(alloc, map->element[i * 2]);
-			ib_object_delete(alloc, map->element[i * 2 + 1]);
-			map->element[i * 2] = NULL;
-			map->element[i * 2 + 1] = NULL;
+			ib_object_delete(alloc, map->u.element[i * 2]);
+			ib_object_delete(alloc, map->u.element[i * 2 + 1]);
+			map->u.element[i * 2] = NULL;
+			map->u.element[i * 2 + 1] = NULL;
 		}
 	}
 	map->size = 0;
@@ -868,15 +869,15 @@ static int ib_object_str_grow(struct IALLOCATOR *alloc,
 		newcap = newcap * 2;
 	}
 	bytes = (size_t)newcap + 1;  // +1 for null terminator
-	if (obj->str == NULL) {
+	if (obj->u.str == NULL) {
 		newbuf = (unsigned char*)internal_malloc(alloc, bytes);
 		if (newbuf == NULL) return -1;
 	}
 	else {
-		newbuf = (unsigned char*)internal_realloc(alloc, obj->str, bytes);
+		newbuf = (unsigned char*)internal_realloc(alloc, obj->u.str, bytes);
 		if (newbuf == NULL) return -1;
 	}
-	obj->str = newbuf;
+	obj->u.str = newbuf;
 	obj->capacity = newcap;
 	return 0;
 }
@@ -892,13 +893,13 @@ int ib_object_str_set(struct IALLOCATOR *alloc,
 			return -1;
 	}
 	if (len > 0 && str != NULL) {
-		memcpy(obj->str, str, (size_t)len);
+		memcpy(obj->u.str, str, (size_t)len);
 	}
 	else if (len > 0) {
 		// str=NULL with len>0: buffer reserved but not initialized
 	}
 	obj->size = len;
-	obj->str[len] = '\0';
+	obj->u.str[len] = '\0';
 	return 0;
 }
 
@@ -910,10 +911,10 @@ int ib_object_str_append(struct IALLOCATOR *alloc,
 	if (len < 0) return -1;
 	if (ib_object_str_grow(alloc, obj, len) != 0) return -1;
 	if (len > 0 && str != NULL) {
-		memcpy(obj->str + obj->size, str, (size_t)len);
+		memcpy(obj->u.str + obj->size, str, (size_t)len);
 	}
 	obj->size += len;
-	obj->str[obj->size] = '\0';
+	obj->u.str[obj->size] = '\0';
 	return 0;
 }
 
@@ -928,10 +929,10 @@ int ib_object_bin_set(struct IALLOCATOR *alloc,
 			return -1;
 	}
 	if (len > 0 && bin != NULL) {
-		memcpy(obj->str, bin, (size_t)len);
+		memcpy(obj->u.str, bin, (size_t)len);
 	}
 	obj->size = len;
-	obj->str[len] = '\0';
+	obj->u.str[len] = '\0';
 	return 0;
 }
 
@@ -943,10 +944,10 @@ int ib_object_bin_append(struct IALLOCATOR *alloc,
 	if (len < 0) return -1;
 	if (ib_object_str_grow(alloc, obj, len) != 0) return -1;
 	if (len > 0 && bin != NULL) {
-		memcpy(obj->str + obj->size, bin, (size_t)len);
+		memcpy(obj->u.str + obj->size, bin, (size_t)len);
 	}
 	obj->size += len;
-	obj->str[obj->size] = '\0';
+	obj->u.str[obj->size] = '\0';
 	return 0;
 }
 
@@ -962,7 +963,7 @@ int ib_object_str_resize(struct IALLOCATOR *alloc,
 			return -1;
 	}
 	obj->size = newsize;
-	obj->str[newsize] = '\0';
+	obj->u.str[newsize] = '\0';
 	return 0;
 }
 
@@ -975,10 +976,10 @@ int ib_object_str_shrink(struct IALLOCATOR *alloc, ib_object *obj)
 	{
 		size_t bytes = (size_t)obj->size + 1;
 		unsigned char *newbuf;
-		if (obj->str == NULL) return 0;
-		newbuf = (unsigned char*)internal_realloc(alloc, obj->str, bytes);
+		if (obj->u.str == NULL) return 0;
+		newbuf = (unsigned char*)internal_realloc(alloc, obj->u.str, bytes);
 		if (newbuf == NULL) return -1;
-		obj->str = newbuf;
+		obj->u.str = newbuf;
 		obj->capacity = obj->size;
 	}
 	return 0;
@@ -996,7 +997,7 @@ int ib_object_bin_resize(struct IALLOCATOR *alloc,
 			return -1;
 	}
 	obj->size = newsize;
-	obj->str[newsize] = '\0';
+	obj->u.str[newsize] = '\0';
 	return 0;
 }
 
@@ -1009,10 +1010,10 @@ int ib_object_bin_shrink(struct IALLOCATOR *alloc, ib_object *obj)
 	{
 		size_t bytes = (size_t)obj->size + 1;
 		unsigned char *newbuf;
-		if (obj->str == NULL) return 0;
-		newbuf = (unsigned char*)internal_realloc(alloc, obj->str, bytes);
+		if (obj->u.str == NULL) return 0;
+		newbuf = (unsigned char*)internal_realloc(alloc, obj->u.str, bytes);
 		if (newbuf == NULL) return -1;
-		obj->str = newbuf;
+		obj->u.str = newbuf;
 		obj->capacity = obj->size;
 	}
 	return 0;
@@ -1057,8 +1058,8 @@ int ib_object_map_set_str(struct IALLOCATOR *alloc,
 	ib_object_init_str(&needle, key, (int)strlen(key));
 	idx = ib_object_map_find(map, &needle);
 	if (idx >= 0) {
-		ib_object *old_val = map->element[idx * 2 + 1];
-		map->element[idx * 2 + 1] = val;
+		ib_object *old_val = map->u.element[idx * 2 + 1];
+		map->u.element[idx * 2 + 1] = val;
 		ib_object_delete(alloc, old_val);
 	}
 	else {
@@ -1127,8 +1128,8 @@ int ib_object_map_set_int(struct IALLOCATOR *alloc,
 	ib_object_init_int(&needle, key);
 	idx = ib_object_map_find(map, &needle);
 	if (idx >= 0) {
-		ib_object *old_val = map->element[idx * 2 + 1];
-		map->element[idx * 2 + 1] = val;
+		ib_object *old_val = map->u.element[idx * 2 + 1];
+		map->u.element[idx * 2 + 1] = val;
 		ib_object_delete(alloc, old_val);
 		return 0;
 	}
@@ -1166,31 +1167,31 @@ ib_object *ib_object_map_detach_int(struct IALLOCATOR *alloc,
 IINT64 ib_object_as_int(const ib_object *obj, IINT64 defval)
 {
 	if (obj == NULL) return defval;
-	if (obj->type == IB_OBJECT_INT) return obj->integer;
-	if (obj->type == IB_OBJECT_BOOL) return obj->integer;
+	if (obj->type == IB_OBJECT_INT) return obj->u.integer;
+	if (obj->type == IB_OBJECT_BOOL) return obj->u.integer;
 	return defval;
 }
 
 double ib_object_as_double(const ib_object *obj, double defval)
 {
 	if (obj == NULL) return defval;
-	if (obj->type == IB_OBJECT_DOUBLE) return obj->dval;
-	if (obj->type == IB_OBJECT_INT) return (double)obj->integer;
+	if (obj->type == IB_OBJECT_DOUBLE) return obj->u.dval;
+	if (obj->type == IB_OBJECT_INT) return (double)obj->u.integer;
 	return defval;
 }
 
 int ib_object_as_bool(const ib_object *obj, int defval)
 {
 	if (obj == NULL) return defval;
-	if (obj->type == IB_OBJECT_BOOL) return (int)obj->integer;
-	if (obj->type == IB_OBJECT_INT) return (obj->integer != 0) ? 1 : 0;
+	if (obj->type == IB_OBJECT_BOOL) return (int)obj->u.integer;
+	if (obj->type == IB_OBJECT_INT) return (obj->u.integer != 0) ? 1 : 0;
 	return defval;
 }
 
 const char *ib_object_as_str(const ib_object *obj, const char *defval)
 {
 	if (obj == NULL) return defval;
-	if (obj->type == IB_OBJECT_STR) return (const char*)obj->str;
+	if (obj->type == IB_OBJECT_STR) return (const char*)obj->u.str;
 	return defval;
 }
 
@@ -1200,7 +1201,7 @@ int ib_object_array_find(const ib_object *arr, const ib_object *item)
 	if (arr == NULL) return -1;
 	assert(arr->type == IB_OBJECT_ARRAY);
 	for (i = 0; i < arr->size; i++) {
-		if (ib_object_equal(arr->element[i], item))
+		if (ib_object_equal(arr->u.element[i], item))
 			return i;
 	}
 	return -1;
@@ -1262,7 +1263,7 @@ static ib_object *ib_object_path_step(const ib_object *current,
 		// array index
 		if (current == NULL || current->type != IB_OBJECT_ARRAY) return NULL;
 		if (idx < 0 || idx >= current->size) return NULL;
-		return current->element[idx];
+		return current->u.element[idx];
 	}
 	else {
 		// MAP key: use needle on stack for zero-alloc lookup
@@ -1319,10 +1320,11 @@ int ib_object_path_set(struct IALLOCATOR *alloc,
 	// if this is the only segment, set directly on obj
 	if (path[pos] == '\0') {
 		if (seg_type == 1) {
+			ib_object *old;
 			// array index on root
 			if (obj->type != IB_OBJECT_ARRAY) return -1;
 			if (idx < 0 || idx >= obj->size) return -1;
-			ib_object *old = ib_object_array_replace(obj, idx, val);
+			old = ib_object_array_replace(obj, idx, val);
 			if (old) ib_object_delete(alloc, old);
 			return 0;
 		}
@@ -1338,9 +1340,10 @@ int ib_object_path_set(struct IALLOCATOR *alloc,
 	last_key_len = key_len;
 	last_idx = idx;
 	for (;;) {
+		int next_type;
 		// parse next segment
 		p_next = pos;
-		int next_type = ib_object_path_segment(path, &p_next,
+		next_type = ib_object_path_segment(path, &p_next,
 				&key, &key_len, &idx);
 		if (next_type < 0) return -1;
 		// current segment is not the last one -- navigate or create
@@ -1348,24 +1351,26 @@ int ib_object_path_set(struct IALLOCATOR *alloc,
 			// array index step: must exist, cannot auto-create
 			if (current->type != IB_OBJECT_ARRAY) return -1;
 			if (last_idx < 0 || last_idx >= current->size) return -1;
-			next = current->element[last_idx];
+			next = current->u.element[last_idx];
 		}
 		else {
+			ib_object needle;
 			// MAP key step: navigate or auto-create MAP
 			if (current->type != IB_OBJECT_MAP) return -1;
-			ib_object needle;
 			ib_object_init_str(&needle, last_key, last_key_len);
 			next = ib_object_map_get(current, &needle);
 			if (next == NULL) {
+				ib_object *k;
+				int hr;
 				// auto-create intermediate MAP node
 				next = ib_object_new_map(alloc, 4);
 				if (next == NULL) return -1;
-				ib_object *k = ib_object_new_str(alloc, last_key, last_key_len);
+				k = ib_object_new_str(alloc, last_key, last_key_len);
 				if (k == NULL) {
 					ib_object_delete(alloc, next);
 					return -1;
 				}
-				int hr = ib_object_map_add(alloc, current, k, next);
+				hr = ib_object_map_add(alloc, current, k, next);
 				if (hr != 0) {
 					ib_object_delete(alloc, k);
 					ib_object_delete(alloc, next);
@@ -1378,9 +1383,10 @@ int ib_object_path_set(struct IALLOCATOR *alloc,
 			// 'next' is the parent of the final segment
 			// the final segment info is in (next_type, key, key_len, idx)
 			if (next_type == 1) {
+				ib_object *old;
 				if (next->type != IB_OBJECT_ARRAY) return -1;
 				if (idx < 0 || idx >= next->size) return -1;
-				ib_object *old = ib_object_array_replace(next, idx, val);
+				old = ib_object_array_replace(next, idx, val);
 				if (old) ib_object_delete(alloc, old);
 				return 0;
 			}
@@ -1434,12 +1440,14 @@ int ib_object_path_erase(struct IALLOCATOR *alloc,
 	last_key_len = key_len;
 	last_idx = idx;
 	for (;;) {
+		int next_type;
+		ib_object *step;
 		p_next = pos;
-		int next_type = ib_object_path_segment(path, &p_next,
+		next_type = ib_object_path_segment(path, &p_next,
 				&key, &key_len, &idx);
 		if (next_type < 0) return -1;
 		// navigate to the parent of the final segment
-		ib_object *step = ib_object_path_step(parent,
+		step = ib_object_path_step(parent,
 				last_seg_type, last_key, last_key_len, last_idx);
 		if (step == NULL) return -1;
 		parent = step;
@@ -1496,7 +1504,7 @@ ilong iring_modulo(const struct IRING *ring, ilong offset)
 		if (offset >= cap) {
 			offset -= cap;
 			offset = (offset < cap)? offset : (offset % cap);
-			if (offset >= cap) 
+			if (offset >= cap)
 				offset %= cap;
 		}
 		return offset;
@@ -1528,7 +1536,7 @@ ilong iring_read(const struct IRING *ring, ilong pos, void *ptr, ilong len)
 	ilong cap = ring->capacity;
 	ilong offset = iring_modulo(ring, ring->head + pos);
 	ilong half = cap - offset;
-	if (cap <= 0) {
+	if (cap <= 0 || len <= 0) {
 		return 0;
 	}
 	len = (len < cap)? len : cap;
@@ -1548,7 +1556,7 @@ ilong iring_write(struct IRING *ring, ilong pos, const void *ptr, ilong len)
 	ilong cap = ring->capacity;
 	ilong offset = iring_modulo(ring, ring->head + pos);
 	ilong half = cap - offset;
-	if (cap <= 0) {
+	if (cap <= 0 || len <= 0) {
 		return 0;
 	}
 	len = (len < cap)? len : cap;
@@ -1567,7 +1575,7 @@ ilong iring_fill(struct IRING *ring, ilong pos, unsigned char ch, ilong len)
 	ilong cap = ring->capacity;
 	ilong offset = iring_modulo(ring, ring->head + pos);
 	ilong half = cap - offset;
-	if (cap <= 0) {
+	if (cap <= 0 || len <= 0) {
 		return 0;
 	}
 	len = (len < cap)? len : cap;
@@ -1598,7 +1606,7 @@ void iring_swap(struct IRING *ring, void *buffer, ilong capacity)
 }
 
 // get two pointers and sizes
-void iring_ptrs(struct IRING *ring, void **p1, ilong *s1, 
+void iring_ptrs(struct IRING *ring, void **p1, ilong *s1,
 	void **p2, ilong *s2)
 {
 	ilong half = ring->capacity - ring->head;
@@ -1884,7 +1892,7 @@ ilong ims_flat(const struct IMSTREAM *s, void **pointer)
 	current = ilist_entry(s->head.next, struct IMSPAGE, head);
 	if (pointer) pointer[0] = current->data + s->pos_read;
 
-	if (current->head.next != &s->head) 
+	if (current->head.next != &s->head)
 		return current->size - s->pos_read;
 
 	return s->pos_write - s->pos_read;
@@ -1935,6 +1943,19 @@ const char* istrcasestr(const char* s1, const char* s2)
 		ptr++;
 	}
 	return NULL;
+}
+
+// strncpy implementation, ensure trailing '\0'
+char *istrncpy(char *dest, const char *src, size_t n)
+{
+	size_t size;
+	if (n == 0) return dest;
+	if (dest == NULL || src == NULL) return dest;
+	size = strlen(src);
+	if (size >= n) size = n - 1;
+	if (size > 0) memmove(dest, src, size);
+	dest[size] = '\0';
+	return dest;
 }
 
 // strncasecmp
@@ -2124,15 +2145,15 @@ static unsigned long istrtoxl(const char *nptr, const char **endptr,
 
 	for (; ; ) {
 		if (isdigit((int)(IUINT8)c)) digval = c - '0';
-		else if (isalpha((int)(IUINT8)c)) 
+		else if (isalpha((int)(IUINT8)c))
 			digval = ITOUPPER(c) - 'A' + 10;
 		else break;
 
 		if (digval >= (unsigned long)ibase) break;
 
 		flags |= IFL_READDIGIT;
-	
-		if (number < maxval || (number == maxval && 
+
+		if (number < maxval || (number == maxval &&
 			(unsigned long)digval <= ~0ul / ibase)) {
 			number = number * ibase + digval;
 		}	else {
@@ -2156,9 +2177,9 @@ static unsigned long istrtoxl(const char *nptr, const char **endptr,
 	else if ((flags & IFL_UNSIGNED) && (flags & IFL_NEG)) {
 		number = 0;
 	}
-	else if ((flags & IFL_OVERFLOW) || 
+	else if ((flags & IFL_OVERFLOW) ||
 		(!(flags & IFL_UNSIGNED) &&
-		(((flags & IFL_NEG) && (number > limit)) || 
+		(((flags & IFL_NEG) && (number > limit)) ||
 		(!(flags & IFL_NEG) && (number > limit - 1))))) {
 		if (flags & IFL_UNSIGNED) number = ~0ul;
 		else if (flags & IFL_NEG) number = (unsigned long)ILONG_MIN;
@@ -2226,8 +2247,8 @@ static IUINT64 istrtoxll(const char *nptr, const char **endptr,
 
 		if (digval >= (IUINT64)ibase) break;
 		flags |= IFL_READDIGIT;
-	
-		if (number < maxval || (number == maxval && 
+
+		if (number < maxval || (number == maxval &&
 			(IUINT64)digval <= ~((IUINT64)0) / ibase)) {
 			number = number * ibase + digval;
 		}	else {
@@ -2249,9 +2270,9 @@ static IUINT64 istrtoxll(const char *nptr, const char **endptr,
 	else if ((flags & IFL_UNSIGNED) && (flags & IFL_NEG)) {
 		number = 0;
 	}
-	else if ((flags & IFL_OVERFLOW) || 
+	else if ((flags & IFL_OVERFLOW) ||
 		(!(flags & IFL_UNSIGNED) &&
-		(((flags & IFL_NEG) && (number > limit)) || 
+		(((flags & IFL_NEG) && (number > limit)) ||
 		(!(flags & IFL_NEG) && (number > limit - 1))))) {
 		if (flags & IFL_UNSIGNED) number = ~((IUINT64)0);
 		else if (flags & IFL_NEG) number = (IUINT64)IINT64_MIN;
@@ -2273,6 +2294,14 @@ static int ixtoa(IUINT64 val, char *buf, unsigned radix, int is_neg)
 	char *firstdig, *p;
 	char temp;
 	int size = 0;
+
+	if (radix == 0) radix = 10;
+
+	if (radix < 2 || radix > 36) {
+		assert(radix >= 2 && radix <= 36);
+		if (buf) *buf = '\0';
+		return 0;
+	}
 
 	p = buf;
 	if (is_neg) {
@@ -2296,13 +2325,13 @@ static int ixtoa(IUINT64 val, char *buf, unsigned radix, int is_neg)
 	}
 
 	*p-- = '\0';
-	do { 
+	while (firstdig < p) {
 		temp = *p;
 		*p = *firstdig;
 		*firstdig = temp;
 		--p;
 		++firstdig;
-	}	while (firstdig < p);
+	}
 
 	return size;
 }
@@ -2376,7 +2405,7 @@ char *istrstrip(char *ptr, const char *delim)
 		if (*spanp == '\0') break;
 		size--;
 	}
-	
+
 	ptr[size] = 0;
 
 	while (p[0]) {
@@ -2450,7 +2479,7 @@ ilong istrload(const char *src, ilong size, char *out)
 
 	if (size < 0) size = strlen(src);
 
-	if (out == NULL) 
+	if (out == NULL)
 		return size + 1;
 
 	for (i = 0; i < size; ) {
@@ -2472,12 +2501,24 @@ ilong istrload(const char *src, ilong size, char *out)
 						IUINT8 a = ptr[i + 2], b = ptr[i + 3];
 						IUINT8 c = 0, d = 0;
 						int a_valid = 0, b_valid = 0;
-						if (a >= '0' && a <= '9') { c = a - '0'; a_valid = 1; }
-						else if (a >= 'a' && a <= 'f') { c = a - 'a' + 10; a_valid = 1; }
-						else if (a >= 'A' && a <= 'F') { c = a - 'A' + 10; a_valid = 1; }
-						if (b >= '0' && b <= '9') { d = b - '0'; b_valid = 1; }
-						else if (b >= 'a' && b <= 'f') { d = b - 'a' + 10; b_valid = 1; }
-						else if (b >= 'A' && b <= 'F') { d = b - 'A' + 10; b_valid = 1; }
+						if (a >= '0' && a <= '9') {
+							c = a - '0'; a_valid = 1;
+						}
+						else if (a >= 'a' && a <= 'f') {
+							c = a - 'a' + 10; a_valid = 1;
+						}
+						else if (a >= 'A' && a <= 'F') {
+							c = a - 'A' + 10; a_valid = 1;
+						}
+						if (b >= '0' && b <= '9') {
+							d = b - '0'; b_valid = 1;
+						}
+						else if (b >= 'a' && b <= 'f') {
+							d = b - 'a' + 10; b_valid = 1;
+						}
+						else if (b >= 'A' && b <= 'F') {
+							d = b - 'A' + 10; b_valid = 1;
+						}
 						if (a_valid && b_valid) {
 							*output++ = (c << 4) | d;
 							i += 4;
@@ -2550,7 +2591,7 @@ const char *istrcsvtok(const char *text, ilong *next, ilong *size)
 		}
 		else {
 			if (text[i] == '\0') { endup = i; *next = i; break; }
-			if (text[i] == '"') { 
+			if (text[i] == '"') {
 				if (text[i + 1] == '"') i += 2;
 				else i++, quotation = 0;
 			}	else {
@@ -2589,20 +2630,20 @@ char *istrndup(const char *text, ilong size)
 	char *str;
     ilong len;
     ilong copy_len;
-    
+
     if (text == NULL) return NULL;
-    
+
     len = 0;
 	for (len = 0; len < size && text[len] != 0; ) len++;
-    
+
     copy_len = len;
-    
+
     str = (char *)ikmem_malloc(copy_len + 1);
     if (str == NULL) return NULL;
-    
+
     memcpy(str, text, copy_len);
     str[copy_len] = '\0';
-    
+
     return str;
 }
 
@@ -2627,7 +2668,7 @@ char *istrdupopt(const char *text)
 ilong ibase64_encode(const void *src, ilong size, char *dst)
 {
 	const IUINT8 *s = (const IUINT8*)src;
-	static const char encode[] = 
+	static const char encode[] =
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	iulong c;
 	char *d = dst;
@@ -2644,7 +2685,7 @@ ilong ibase64_encode(const void *src, ilong size, char *dst)
 	}
 
 	for (i = 0; i < size; ) {
-		c = s[i]; 
+		c = s[i];
 		c <<= 8;
 		i++;
 		c += (i < size)? s[i] : 0;
@@ -2699,7 +2740,7 @@ ilong ibase64_decode(const char *src, ilong size, void *dst)
 			}											\
 			if (i >= size) { i = size + 1; break; } 	\
 		}
-	
+
 	for (i = 0, j = 0, k = 0; i < (iulong)size; ) {
 		mark = 0;
 		c = 0;
@@ -2708,7 +2749,7 @@ ilong ibase64_decode(const char *src, ilong size, void *dst)
 		c += decode[s[i]];
 		c <<= 6;
 		i++;
-		
+
 		ibase64_skip(s, i, (iulong)size);
 		c += decode[s[i]];
 		c <<= 6;
@@ -2732,7 +2773,7 @@ ilong ibase64_decode(const char *src, ilong size, void *dst)
 		b[1] = (IUINT8)((c >>  8) & 0xff);
 		b[2] = (IUINT8)((c >>  0) & 0xff);
 
-		for (j = 0; j < 3 - mark; j++) 
+		for (j = 0; j < 3 - mark; j++)
 			d[k++] = b[j];
 	}
 
@@ -2837,7 +2878,7 @@ ilong ibase16_encode(const void *src, ilong size, char *dst)
 	static const char encode[] = "0123456789ABCDEF";
 	const IUINT8 *ptr = (const IUINT8*)src;
 	char *output = dst;
-	if (src == NULL || dst == NULL) 
+	if (src == NULL || dst == NULL)
 		return 2 * size;
 	for (; size > 0; output += 2, ptr++, size--) {
 		output[0] = encode[ptr[0] >> 4];
@@ -2856,9 +2897,9 @@ ilong ibase16_decode(const char *src, ilong size, void *dst)
 	if (size == 0) return 0;
 	if (size < 0) size = strlen(src);
 
-	if (src == NULL || dst == NULL) 
+	if (src == NULL || dst == NULL)
 		return size >> 1;
-	
+
 	for (; size > 0; size--) {
 		IUINT8 ch = *in++;
 		if (ch >= '0' && ch <= '9') word = ch - '0';
@@ -2878,7 +2919,7 @@ ilong ibase16_decode(const char *src, ilong size, void *dst)
 //====================================================================
 
 // rc4 init
-void icrypt_rc4_init(unsigned char *box, int *x, int *y, 
+void icrypt_rc4_init(unsigned char *box, int *x, int *y,
 	const unsigned char *key, int keylen)
 {
 	int X, Y, i, j, k, a;
@@ -2887,7 +2928,7 @@ void icrypt_rc4_init(unsigned char *box, int *x, int *y,
 		Y = -1;
 	}	else {
 		X = Y = j = k = 0;
-		for (i = 0; i < 256; i++) 
+		for (i = 0; i < 256; i++)
 			box[i] = (unsigned char)i;
 		for (i = 0; i < 256; i++) {
 			a = box[i];
@@ -2902,16 +2943,16 @@ void icrypt_rc4_init(unsigned char *box, int *x, int *y,
 }
 
 // rc4_crypt
-void icrypt_rc4_crypt(unsigned char *box, int *x, int *y, 
+void icrypt_rc4_crypt(unsigned char *box, int *x, int *y,
 	const unsigned char *src, unsigned char *dst, ilong size)
 {
 	int X = x[0];
 	int Y = y[0];
 	if (X < 0 || Y < 0) {			// no crypt
-		if (src != dst) 
+		if (src != dst)
 			memmove(dst, src, size);
 	}	else {						// crypt
-		int a, b; 
+		int a, b;
 		for (; size > 0; src++, dst++, size--) {
 			X = (unsigned char)(X + 1);
 			a = box[X];
@@ -2962,8 +3003,8 @@ static const char iconv_utf8_trailing[256] = {
 	2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2, 3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5
 };
 
-static const IUINT32 iconv_utf8_offset[6] = { 0x00000000UL, 
-	0x00003080UL, 0x000E2080UL, 0x03C82080UL, 0xFA082080UL, 
+static const IUINT32 iconv_utf8_offset[6] = { 0x00000000UL,
+	0x00003080UL, 0x000E2080UL, 0x03C82080UL, 0xFA082080UL,
 	0x82082080UL };
 
 static const IUINT32 iconv_first_mark[7] = { 0x00, 0x00, 0xC0,
@@ -3113,7 +3154,7 @@ int iposix_utf_8to32(const IUINT8 **srcStart, const IUINT8 *srcEnd,
 		ch -= iconv_utf8_offset[extraBytesToRead];
 		if (target >= targetEnd) {
 			// Back up the source pointer!
-			source -= (extraBytesToRead+1); 
+			source -= (extraBytesToRead+1);
 			result = ICONV_TARGET_EXHAUSTED; break;
 		}
 		if (ch <= ICONV_MAX_LEGAL_UTF32) {
@@ -3124,7 +3165,7 @@ int iposix_utf_8to32(const IUINT8 **srcStart, const IUINT8 *srcEnd,
 			if (ch >= ICONV_SUR_HIGH_START && ch <= ICONV_SUR_LOW_END) {
 				if (strict) {
 					// return to the illegal value itself
-					source -= (extraBytesToRead+1); 
+					source -= (extraBytesToRead+1);
 					result = ICONV_INVALID_CHAR;
 					break;
 				} else {
@@ -3155,13 +3196,13 @@ int iposix_utf_16to8(const IUINT16 **srcStart, const IUINT16 *srcEnd,
 		IUINT32 ch;
 		unsigned short bytesToWrite = 0;
 		const IUINT32 byteMask = 0xBF;
-		const IUINT32 byteMark = 0x80; 
+		const IUINT32 byteMark = 0x80;
 		// In case we have to back up because of target overflow.
-		const IUINT16* oldSource = source; 
+		const IUINT16* oldSource = source;
 		ch = *source++;
 		// If we have a surrogate pair, convert to IUINT32 first.
 		if (ch >= ICONV_SUR_HIGH_START && ch <= ICONV_SUR_HIGH_END) {
-			/* If the 16 bits following the high surrogate are in 
+			/* If the 16 bits following the high surrogate are in
 			 * the source buffer... */
 			if (source < srcEnd) {
 				IUINT32 ch2 = *source;
@@ -3175,7 +3216,7 @@ int iposix_utf_16to8(const IUINT16 **srcStart, const IUINT16 *srcEnd,
 					result = ICONV_INVALID_CHAR;
 					break;
 				}
-			} else { 
+			} else {
 				// We don't have the 16 bits following the high surrogate.
 				--source; // return to the high surrogate
 				result = ICONV_SRC_EXHAUSTED;
@@ -3192,11 +3233,11 @@ int iposix_utf_16to8(const IUINT16 **srcStart, const IUINT16 *srcEnd,
 		// Figure out how many bytes the result will require
 		if (ch < (IUINT32)0x80) {
 			bytesToWrite = 1;
-		} 
+		}
 		else if (ch < (IUINT32)0x800) {
 			bytesToWrite = 2;
 		}
-		else if (ch < (IUINT32)0x10000) { 
+		else if (ch < (IUINT32)0x10000) {
 			bytesToWrite = 3;
 		}
 		else if (ch < (IUINT32)0x110000) {
@@ -3242,7 +3283,7 @@ int iposix_utf_16to32(const IUINT16 **srcStart, const IUINT16 *srcEnd,
 		ch = *source++;
 		// If we have a surrogate pair, convert to IUINT32 first.
 		if (ch >= ICONV_SUR_HIGH_START && ch <= ICONV_SUR_HIGH_END) {
-			/* If the 16 bits following the high surrogate are in 
+			/* If the 16 bits following the high surrogate are in
 			 * the source buffer... */
 			if (source < srcEnd) {
 				ch2 = *source;
@@ -3299,7 +3340,7 @@ int iposix_utf_32to8(const IUINT32 **srcStart, const IUINT32 *srcEnd,
 		IUINT32 ch;
 		unsigned short bytesToWrite = 0;
 		const IUINT32 byteMask = 0xBF;
-		const IUINT32 byteMark = 0x80; 
+		const IUINT32 byteMark = 0x80;
 		ch = *source++;
 		if (strict) {
 			// UTF-16 surrogate values are illegal in UTF-32
@@ -3311,7 +3352,7 @@ int iposix_utf_32to8(const IUINT32 **srcStart, const IUINT32 *srcEnd,
 		}
 		/*
 		 * Figure out how many bytes the result will require. Turn any
-		 * illegally large IUINT32 things (> Plane 17) into replacement chars.
+		 * illegally large IUINT32 things (> Plane 17) into replacement chars
 		 */
 		if (ch < (IUINT32)0x80) {
 			bytesToWrite = 1;
@@ -3367,7 +3408,7 @@ int iposix_utf_32to16(const IUINT32 **srcStart, const IUINT32 *srcEnd,
 		}
 		ch = *source++;
 		if (ch <= ICONV_MAX_BMP) { // Target is a character <= 0xFFFF
-			/* UTF-16 surrogate values are illegal in UTF-32; 
+			/* UTF-16 surrogate values are illegal in UTF-32;
 			 * 0xffff or 0xfffe are both reserved values */
 			if (ch >= ICONV_SUR_HIGH_START && ch <= ICONV_SUR_LOW_END) {
 				if (strict) {
@@ -3390,7 +3431,7 @@ int iposix_utf_32to16(const IUINT32 **srcStart, const IUINT32 *srcEnd,
 			// target is a character in range 0xFFFF - 0x10FFFF.
 			if (target + 1 >= targetEnd) {
 				--source; // Back up source pointer!
-				result = ICONV_TARGET_EXHAUSTED; 
+				result = ICONV_TARGET_EXHAUSTED;
 				break;
 			}
 			ch -= ihalfBase;
@@ -3464,7 +3505,7 @@ void iposix_msg_push(struct IMSTREAM *queue, IINT32 msg, IINT32 wparam,
 
 
 // read message from stream
-IINT32 iposix_msg_read(struct IMSTREAM *queue, IINT32 *msg, 
+IINT32 iposix_msg_read(struct IMSTREAM *queue, IINT32 *msg,
 		IINT32 *wparam, IINT32 *lparam, void *data, IINT32 maxsize)
 {
 	IINT32 length, size, cc;
