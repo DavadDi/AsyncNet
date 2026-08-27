@@ -1351,7 +1351,8 @@ long async_stream_tcp_move(CAsyncStream *stream, long size)
 
 
 //---------------------------------------------------------------------
-// get the underlying socket fd, returns -1 if not a TCP stream
+// get the underlying socket fd (searches the 'underlying' chain for
+// non-TCP streams), returns -1 if no TCP stream exists in the chain
 //---------------------------------------------------------------------
 int async_stream_tcp_getfd(const CAsyncStream *stream)
 {

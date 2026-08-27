@@ -197,10 +197,12 @@ CAsyncStream *async_stream_tcp_assign(CAsyncLoop *loop,
 #define ASYNC_STREAM_OPT_TCP_GETFD     (ASYNC_STREAM_OPT_TCP_MASK | 1)
 #define ASYNC_STREAM_OPT_TCP_NODELAY   (ASYNC_STREAM_OPT_TCP_MASK | 2)
 
-// move data from recv buffer to send buffer
+// move data from recv buffer to send buffer, returns -1 if not a TCP stream
 long async_stream_tcp_move(CAsyncStream *stream, long size);
 
-// get the underlying socket fd, returns -1 if not a TCP stream
+// get the underlying socket fd. for non-TCP streams, searches the
+// 'underlying' chain recursively; returns -1 only when no TCP stream
+// exists in the chain
 int async_stream_tcp_getfd(const CAsyncStream *stream);
 
 

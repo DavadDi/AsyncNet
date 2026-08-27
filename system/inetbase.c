@@ -253,7 +253,8 @@ unsigned long iclock(void)
 }
 
 
-/* real time usec (1/1000000 sec) clock */
+/* usec (1/1000000 sec) clock: uses CLOCK_MONOTONIC on Unix by default
+ * (CLOCK_REALTIME only when ICLOCK_TYPE_REALTIME is defined) */
 IINT64 iclockrt(void)
 {
 	IINT64 current;

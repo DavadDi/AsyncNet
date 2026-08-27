@@ -15,7 +15,8 @@
 // - Timer management for scheduling time-based events
 // - Semaphores for thread synchronization 
 // - Idle event handling for background tasks
-// - One-time event execution
+// - Postpone events for deferred execution
+// - Once events executed on every loop iteration
 // - Cross-platform support
 //
 // The CAsyncLoop serves as the central event dispatcher, managing

@@ -441,7 +441,9 @@ unsigned long iclock(void);
 /* get clock in millisecond 64 */
 IINT64 iclock64(void);
 
-/* real time usec (1/1000000 sec) clock */
+/* usec (1/1000000 sec) clock: real time on Windows; on Unix it uses
+ * CLOCK_MONOTONIC by default (define ICLOCK_TYPE_REALTIME to switch to
+ * CLOCK_REALTIME); do not assume wall-clock time */
 IINT64 iclockrt(void);
 
 /* real time nsec (1/1000000000 sec) clock */

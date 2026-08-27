@@ -642,10 +642,10 @@ int iltoa(long val, char *buf, int radix);
 // iultoa implementation
 int iultoa(unsigned long val, char *buf, int radix);
 
-// iltoa implementation
+// illtoa implementation
 int illtoa(IINT64 val, char *buf, int radix);
 
-// iultoa implementation
+// iulltoa implementation
 int iulltoa(IUINT64 val, char *buf, int radix);
 
 // istrstrip implementation
@@ -749,7 +749,9 @@ int iposix_utf_32to16(const IUINT32 **srcStart, const IUINT32 *srcEnd,
 // check if a UTF-8 character is legal, returns 1 for legal, 0 for illegal
 int iposix_utf_check8(const IUINT8 *source, const IUINT8 *srcEnd);
 
-// count characters in UTF-8 string, returns -1 for illegal sequence
+// count characters in UTF-8 string, returns -1 for truncated sequence.
+// note: only checks for truncation, not strict legality (overlong but
+// complete sequences are counted normally)
 int iposix_utf_count8(const IUINT8 *source, const IUINT8 *srcEnd);
 
 // count characters in UTF-16 string, returns -1 for illegal sequence

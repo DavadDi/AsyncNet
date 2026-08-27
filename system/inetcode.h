@@ -52,13 +52,13 @@ int isocket_update_address(int resolvname);
 //=====================================================================
 struct CAsyncSock
 {
-	IUINT32 time;                // timeout
+	IUINT32 time;                // last-active timestamp (ms)
 	int fd;                      // socket fd
 	int state;                   // CLOSED/CONNECTING/ESTABLISHED
 	long hid;                    // hid
 	long tag;                    // tag
 	int error;                   // errno value
-	int header;                  // header mode (0-13)
+	int header;                  // header mode (0-15, ITMH_*)
 	int mask;                    // poll event mask
 	int mode;                    // socket mode
 	int ipv6;                    // 0:ipv4, 1:ipv6
@@ -241,7 +241,8 @@ typedef int (*CAsyncFilter)(CAsyncCore *core, void *object, long hid,
 	int cmd, const void *data, long size);
 
 // create CAsyncCore object:
-// if (flags & 1) disable lock, if (flags & 2) disable notify
+// if (flags & 1) disable lock. note: (flags & 2) is accepted for
+// backward compatibility but has no effect (notify is always enabled)
 CAsyncCore* async_core_new(CAsyncLoop *loop, int flags);
 
 // delete async core
@@ -252,7 +253,10 @@ void async_core_delete(CAsyncCore *core);
 // if millisec equals zero, no wait.
 void async_core_wait(CAsyncCore *core, IUINT32 millisec);
 
-// wake async_core_wait up, returns zero for success
+// old interface compatible wrapper of async_core_wait
+void async_core_process(CAsyncCore *core, IUINT32 millisec);
+
+// wake async_core_wait up, always returns zero
 int async_core_notify(CAsyncCore *core);
 
 // get loop object
@@ -294,11 +298,12 @@ long async_core_new_dgram(CAsyncCore *core, const struct sockaddr *addr,
 	int addrlen, int mode);
 
 
-// queue an ASYNC_CORE_EVT_POST event and wake async_core_wait u
+// queue an ASYNC_CORE_EVT_POST event and wake async_core_wait up
 int async_core_post(CAsyncCore *core, long wparam, long lparam, 
 	const void *data, long size);
 
-// queue an arbitrary event and wake async_core_wait up
+// queue an arbitrary event (does NOT wake async_core_wait up, use
+// async_core_notify/async_core_post for that)
 int async_core_push(CAsyncCore *core, int event, long wparam, long lparam,
 	const void *data, long size);
 
@@ -306,7 +311,7 @@ int async_core_push(CAsyncCore *core, int event, long wparam, long lparam,
 // returns remain data size only if data == NULL.
 long async_core_fetch(CAsyncCore *core, long hid, void *data, long size);
 
-// get node mode: ASYNC_CORE_NODE_IN/OUT/LISTEN4/LISTEN6/ASSIGN
+// get node mode: ASYNC_CORE_NODE_IN/OUT/LISTEN/ASSIGN/DGRAM
 int async_core_get_mode(const CAsyncCore *core, long hid);
 
 // returns connection tag, -1 for hid not exist
@@ -502,6 +507,10 @@ int iproxy_init(struct ISOCKPROXY *proxy, int sock, int type,
 // update state
 // returns 1 for success, below zero for error, zero for try again later
 int iproxy_process(struct ISOCKPROXY *proxy);
+
+// base64 encode: writes encoded text (with '=' padding) plus a trailing
+// NUL to out, returns number of encoded characters (excluding the NUL)
+int iproxy_base64(const unsigned char *in, unsigned char *out, int size);
 
 
 

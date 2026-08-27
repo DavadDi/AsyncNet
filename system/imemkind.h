@@ -187,7 +187,7 @@ struct ib_resp_reader;
 typedef struct ib_resp_reader ib_resp_reader;
 
 // create a new RESP incremental decoder.
-// default limits: max_depth=8, max_bulk=256MB, max_elements=1048576.
+// default limits: max_depth=8, max_bulk=512MB, max_elements=1048576.
 // returns NULL on allocation failure.
 ib_resp_reader *ib_resp_reader_new(void);
 
@@ -213,7 +213,7 @@ void ib_resp_reader_clear(ib_resp_reader *reader);
 
 // configure safety limits to prevent resource exhaustion:
 //   max_depth    - max nesting depth for arrays/maps (default 8)
-//   max_bulk     - max bulk string size in bytes (default 256MB)
+//   max_bulk     - max bulk string size in bytes (default 512MB)
 //   max_elements - max elements in a single array/map (default 1048576)
 void ib_resp_reader_set_limits(ib_resp_reader *reader,
         int max_depth, long max_bulk, int max_elements);
@@ -233,7 +233,7 @@ void ib_resp_reader_set_inline(ib_resp_reader *reader, int enable);
 //
 // Example - serialize "SET key value":
 //   ib_string out;
-//   ib_string_init(&out, NULL, 0);
+//   ib_string_init(&out);
 //   ib_resp_write_array(&out, 3);
 //   ib_resp_write_bulk(&out, "SET", 3);
 //   ib_resp_write_bulk(&out, "key", 3);
@@ -371,7 +371,7 @@ void ib_msgpack_reader_set_limits(ib_msgpack_reader *reader,
 //
 // Example - serialize {"name": "Alice", "age": 30}:
 //   ib_string out;
-//   ib_string_init(&out, NULL, 0);
+//   ib_string_init(&out);
 //   ib_msgpack_write_map(&out, 2);
 //   ib_msgpack_write_str(&out, "name", 4);
 //   ib_msgpack_write_str(&out, "Alice", 5);
@@ -385,7 +385,8 @@ int ib_msgpack_write_nil(ib_string *out);
 // write msgpack boolean (0xc2=false, 0xc3=true)
 int ib_msgpack_write_bool(ib_string *out, int val);
 
-// write signed integer, uses smallest encoding (fixint/int8/../int64)
+// write signed integer, uses smallest encoding
+// (positive: fixint/uint8/uint16/uint32/int64, negative: int8/../int64)
 int ib_msgpack_write_int(ib_string *out, IINT64 val);
 
 // write unsigned integer, uses smallest encoding (fixint/uint8/../uint64)
@@ -501,7 +502,7 @@ void ib_json_reader_set_limits(ib_json_reader *reader,
 //
 // Example - serialize {"name":"Alice","age":30}:
 //   ib_string out;
-//   ib_string_init(&out, NULL, 0);
+//   ib_string_init(&out);
 //   ib_json_write_object_begin(&out);
 //   ib_json_write_key(&out, "name", 4);
 //   ib_json_write_str(&out, "Alice", 5);
@@ -613,7 +614,7 @@ int ib_object_path_set_str(struct IALLOCATOR *alloc, ib_object *obj,
 int ib_object_path_set_bin(struct IALLOCATOR *alloc, ib_object *obj, 
 		const char *path, const void *value, int len);
 
-// set a binary value at a nested path within an ib_object tree.
+// set a boolean value at a nested path within an ib_object tree.
 int ib_object_path_set_bool(struct IALLOCATOR *alloc, ib_object *obj, 
 		const char *path, int value);
 
