@@ -51,7 +51,7 @@ void iposix_addr_set_ip(iPosixAddress *addr, const void *ip)
 	}
 #ifdef AF_INET6
 	else if (addr->sin6.sin6_family == AF_INET6) {
-		memcpy(iposix_addr_v6_u8(addr), ip, 4);
+		memcpy(iposix_addr_v6_u8(addr), ip, 16);
 	}
 #endif
 }
@@ -844,6 +844,18 @@ void iposix_reg_install(const char *key, void *obj, void (*dtor)(void*))
 		dtor(obj);
 	}
 }
+
+// clear all registry entries and user objects, call dtor for each object
+void iposix_reg_clear(void)
+{
+	iposix_reg_ensure();
+	IMUTEX_LOCK(&_iposix_reg_lock2);
+	if (!_iposix_reg_closing && _iposix_reg_managed) {
+		ib_managed_clear(_iposix_reg_managed);
+	}
+	IMUTEX_UNLOCK(&_iposix_reg_lock2);
+}
+
 
 // lock the registry, in case you want to do multiple operations atomically
 // like iposix_reg_query + iposix_reg_install

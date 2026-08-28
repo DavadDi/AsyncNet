@@ -99,6 +99,9 @@ void *ib_managed_query(ib_managed *managed, const char *key);
 int ib_managed_install(ib_managed *managed, const char *key, void *obj,
 		void (*cleanup)(void *obj));
 
+// clear all managed user objects, call cleanup for each object
+void ib_managed_clear(ib_managed *managed);
+
 
 //---------------------------------------------------------------------
 // CAsyncReader - read data from stream with various modes

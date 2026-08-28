@@ -97,6 +97,10 @@ public:
 	inline const CAsyncLoop *GetLoop() const { return _loop; }
 
 	// 取得默认消息循环对象（线程本地变量，每个线程一个独立实例）
+	// 注：32 位 MinGW（emutls）下底层改用 pthread key 存储以绕开
+	// tls_atexit 析构链的 UAF 缺陷，该平台主线程实例在进程退出时
+	// 不会自动析构（内存由 OS 回收），需要确定销毁的场景请显式管理
+	// loop 生命周期，不要依赖主线程实例的析构
 	static AsyncLoop& GetDefaultLoop();
 
 	// 取得一个假对象，该对象 IsDummy() 接口会返回 true。

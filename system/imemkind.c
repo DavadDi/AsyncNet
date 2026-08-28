@@ -268,26 +268,7 @@ void ib_managed_delete(ib_managed *managed)
 {
 	assert(managed);
 	assert(managed->obj_map);
-	managed->closing = 1;
-	while (!ilist_is_empty(&managed->obj_head)) {
-		ilist_head *it = managed->obj_head.next;
-		ib_entry *object = ilist_entry(it, ib_entry, node);
-		void *ptr = object->ptr;
-		void (*cleanup)(void*) = object->cleanup;
-		ilist_del_init(&object->node);
-		ib_map_remove(managed->obj_map, object->key);
-		object->ptr = NULL;
-		if (object->key) {
-			ikmem_free(object->key);
-			object->key = NULL;
-		}
-		ikmem_free(object);
-		if (cleanup) {
-			if (ptr) {
-				cleanup(ptr);
-			}
-		}
-	}
+	ib_managed_clear(managed);
 	ib_map_destroy(managed->obj_map);
 	ikmem_free(managed->obj_map);
 	managed->obj_map = NULL;
@@ -305,6 +286,7 @@ int ib_managed_install(ib_managed *managed, const char *key, void *obj,
 {
 	struct ib_hash_entry *entry;
 	ib_entry *object;
+	ib_entry *removed_object = NULL;
 	void *oldptr = NULL;
 	void (*olddtor)(void*) = NULL;
 	if (key == NULL) {
@@ -374,11 +356,14 @@ int ib_managed_install(ib_managed *managed, const char *key, void *obj,
 				object->key = NULL;
 			}
 			object->ptr = NULL;
-			ikmem_free(object);
+			removed_object = object;
 		}
 	}
 	if (olddtor) {
 		if (oldptr) olddtor(oldptr);
+	}
+	if (removed_object) {
+		ikmem_free(removed_object);
 	}
 	return 0;
 }
@@ -401,6 +386,37 @@ void *ib_managed_query(ib_managed *managed, const char *key)
 		}
 	}
 	return NULL;
+}
+
+
+//---------------------------------------------------------------------
+// clear all managed user objects, call cleanup for each object
+//---------------------------------------------------------------------
+void ib_managed_clear(ib_managed *managed)
+{
+	assert(managed);
+	assert(managed->obj_map);
+	managed->closing = 1;
+	while (!ilist_is_empty(&managed->obj_head)) {
+		ilist_head *it = managed->obj_head.next;
+		ib_entry *object = ilist_entry(it, ib_entry, node);
+		void *ptr = object->ptr;
+		void (*cleanup)(void*) = object->cleanup;
+		ilist_del_init(&object->node);
+		ib_map_remove(managed->obj_map, object->key);
+		object->ptr = NULL;
+		if (object->key) {
+			ikmem_free(object->key);
+			object->key = NULL;
+		}
+		if (cleanup) {
+			if (ptr) {
+				cleanup(ptr);
+			}
+		}
+		ikmem_free(object);
+	}
+	managed->closing = 0;
 }
 
 

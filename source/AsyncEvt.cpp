@@ -2,7 +2,7 @@
 //
 // AsyncEvt.cpp - Asynchronous Event Loop and Event Handling
 //
-// Last Modified: 2025/04/19 22:08:19
+// Last Modified: 2026/08/28 22:10:00
 //
 //=====================================================================
 #include <stddef.h>
@@ -10,6 +10,23 @@
 #include <assert.h>
 
 #include "AsyncEvt.h"
+
+//---------------------------------------------------------------------
+// MinGW 32-bit runs with emulated TLS: a thread_local object with a
+// destructor runs through the CRT tls_atexit chain on thread exit,
+// AFTER winpthread key destructors have already freed the emutls
+// per-thread storage that holds the object (verified with gdb:
+// emutls_destroy from _pthread_cleanup_dest runs before run_dtor_list
+// from tls_atexit.c, and ~AsyncLoop then SIGSEGVs on freed memory).
+// Store the per-thread default loop behind a pthread key instead:
+// winpthread runs key destructors while the heap and the object are
+// still valid. Other platforms (native TLS: MSVC, MinGW64, Linux,
+// macOS) keep the plain thread_local object.
+//---------------------------------------------------------------------
+#if defined(__MINGW32__) && !defined(__MINGW64__)
+#include <pthread.h>
+#define ASYNC_EVT_EMUTLS_WORKAROUND 1
+#endif
 
 
 NAMESPACE_BEGIN(System);
@@ -114,8 +131,24 @@ AsyncLoop::AsyncLoop(AsyncLoop &&src)
 //---------------------------------------------------------------------
 AsyncLoop& AsyncLoop::GetDefaultLoop()
 {
+#if defined(ASYNC_EVT_EMUTLS_WORKAROUND)
+	static pthread_key_t key;
+	static pthread_once_t once = PTHREAD_ONCE_INIT;
+	pthread_once(&once, []() {
+		pthread_key_create(&key, [](void *ptr) {
+			delete (AsyncLoop*)ptr;
+		});
+	});
+	AsyncLoop *instance = (AsyncLoop*)pthread_getspecific(key);
+	if (instance == NULL) {
+		instance = new AsyncLoop();
+		pthread_setspecific(key, instance);
+	}
+	return *instance;
+#else
 	static thread_local AsyncLoop loop;
 	return loop;
+#endif
 }
 
 

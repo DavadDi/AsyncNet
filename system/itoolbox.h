@@ -105,7 +105,8 @@ int iposix_addr_from(iPosixAddress *addr, const char *text);
 // hash posix address
 IUINT32 iposix_addr_hash(const iPosixAddress *addr);
 
-// uuid: can be used as a key in hash table
+// uuid: can be used as a key in hash table (for IPv6 this is a folded
+// 32-bit hash of the 128-bit address, so collisions are possible)
 IINT64 iposix_addr_uuid(const iPosixAddress *addr);
 
 // returns zero if a1 equals to a2
@@ -120,10 +121,12 @@ int iposix_addr_ip_equals(const iPosixAddress *a1, const iPosixAddress *a2);
 // otherwise returns 4
 int iposix_addr_version(const char *text);
 
-// setup address from sockaddr
+// get local address of socket fd (getsockname) into addr,
+// returns 0 for success, -1 for addr==NULL or failure, -2 for fd<0
 int iposix_addr_sockname(int fd, iPosixAddress *addr);
 
-// setup address from sockaddr
+// get peer address of socket fd (getpeername) into addr,
+// returns 0 for success, -1 for addr==NULL or failure, -2 for fd<0
 int iposix_addr_peername(int fd, iPosixAddress *addr);
 
 
@@ -182,8 +185,13 @@ void *iposix_reg_query(const char *key);
 // when process exiting. if obj is NULL existing obj will be removed.
 void iposix_reg_install(const char *key, void *obj, void (*dtor)(void*));
 
-// lock the registry, in case you want to do multiple operations atomically
-// like iposix_reg_query + iposix_reg_install
+// clear all registry entries and user objects, call dtor for each object
+void iposix_reg_clear(void);
+
+// lock the registry. note: this lock only serializes against other
+// iposix_reg_lock/unlock calls; iposix_reg_query/install use their own
+// internal lock, so holding this lock does NOT make query + install
+// atomic with respect to concurrent callers
 void iposix_reg_lock(void);
 
 // unlock the registry
