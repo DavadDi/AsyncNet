@@ -12,16 +12,12 @@
 #include "AsyncEvt.h"
 
 //---------------------------------------------------------------------
-// MinGW 32-bit runs with emulated TLS: a thread_local object with a
-// destructor runs through the CRT tls_atexit chain on thread exit,
-// AFTER winpthread key destructors have already freed the emutls
-// per-thread storage that holds the object (verified with gdb:
-// emutls_destroy from _pthread_cleanup_dest runs before run_dtor_list
-// from tls_atexit.c, and ~AsyncLoop then SIGSEGVs on freed memory).
-// Store the per-thread default loop behind a pthread key instead:
-// winpthread runs key destructors while the heap and the object are
-// still valid. Other platforms (native TLS: MSVC, MinGW64, Linux,
-// macOS) keep the plain thread_local object.
+// 32 位 MinGW 下每线程默认循环改用 pthread key 存储而不是
+// thread_local 对象，以规避 emutls 线程退出析构顺序的
+// use-after-free；其它平台仍用普通 thread_local 对象。
+// 完整论证、四工具链实测矩阵以及 key 析构的平台语义（覆盖
+// CreateThread 线程、主线程泄漏、加载器锁、重入）见
+// docs/AsyncEvt.md 的"GetDefaultLoop —— 线程局部默认循环"一节。
 //---------------------------------------------------------------------
 #if defined(__MINGW32__) && !defined(__MINGW64__)
 #include <pthread.h>
@@ -131,23 +127,35 @@ AsyncLoop::AsyncLoop(AsyncLoop &&src)
 //---------------------------------------------------------------------
 AsyncLoop& AsyncLoop::GetDefaultLoop()
 {
-#if defined(ASYNC_EVT_EMUTLS_WORKAROUND)
+#if !defined(ASYNC_EVT_EMUTLS_WORKAROUND)
+	static thread_local AsyncLoop loop;
+	return loop;
+#else
 	static pthread_key_t key;
 	static pthread_once_t once = PTHREAD_ONCE_INIT;
+	static int key_ready = 0;
 	pthread_once(&once, []() {
-		pthread_key_create(&key, [](void *ptr) {
+		key_ready = (pthread_key_create(&key, [](void *ptr) {
+			// MSYS2 winpthread 观察到会在 key 析构运行期间又调过
+			// pthread_setspecific() 的情况下以 NULL 再次调用本析构：
+			// delete 对空指针是合法的，但仍保留显式守卫，以防未来
+			// 函数体超出单纯的 delete 之后踩坑
+			if (ptr == NULL) return;
 			delete (AsyncLoop*)ptr;
-		});
+		}) == 0);
 	});
+	if (key_ready == 0) {
+		// TLS 分配失败：降级为一个进程共享的 loop（与 GetDummyLoop
+		// 同形态），而不是去碰一个无效的 key（那是未定义行为）
+		static AsyncLoop fallback;
+		return fallback;
+	}
 	AsyncLoop *instance = (AsyncLoop*)pthread_getspecific(key);
 	if (instance == NULL) {
 		instance = new AsyncLoop();
 		pthread_setspecific(key, instance);
 	}
 	return *instance;
-#else
-	static thread_local AsyncLoop loop;
-	return loop;
 #endif
 }
 
@@ -506,6 +514,7 @@ AsyncEvent::AsyncEvent(AsyncLoop &loop)
 void AsyncEvent::EventCB(CAsyncLoop *loop, CAsyncEvent *evt, int event)
 {
 	AsyncEvent *self = (AsyncEvent*)evt->user;
+	(void)loop;
 	if ((*self->_cb_ptr) != nullptr) {
 		auto ref_ptr = self->_cb_ptr;
 		try {
@@ -648,6 +657,7 @@ AsyncTimer::AsyncTimer(CAsyncLoop *loop)
 void AsyncTimer::TimerCB(CAsyncLoop *loop, CAsyncTimer *timer)
 {
 	AsyncTimer *self = (AsyncTimer*)timer->user;
+	(void)loop;
 	if ((*self->_cb_ptr) != nullptr) {
 		std::shared_ptr<AsyncTimer::Callback> ref_ptr = self->_cb_ptr;
 		try { 
@@ -750,6 +760,7 @@ AsyncSemaphore::AsyncSemaphore(CAsyncLoop *loop)
 void AsyncSemaphore::NotifyCB(CAsyncLoop *loop, CAsyncSemaphore *notify)
 {
 	AsyncSemaphore *self = (AsyncSemaphore*)(notify->user);
+	(void)loop;
 	if ((*self->_cb_ptr) != nullptr) {
 		auto ref_ptr = self->_cb_ptr;
 		try {
@@ -864,6 +875,7 @@ AsyncPostpone::AsyncPostpone(CAsyncLoop *loop)
 void AsyncPostpone::InternalCB(CAsyncLoop *loop, CAsyncPostpone *postpone)
 {
 	AsyncPostpone *self = (AsyncPostpone*)postpone->user;
+	(void)loop;
 	if ((*self->_cb_ptr) != NULL) {
 		auto ref_ptr = self->_cb_ptr;
 		try {
@@ -967,6 +979,7 @@ AsyncIdle::AsyncIdle(CAsyncLoop *loop)
 void AsyncIdle::InternalCB(CAsyncLoop *loop, CAsyncIdle *idle)
 {
 	AsyncIdle *self = (AsyncIdle*)idle->user;
+	(void)loop;
 	if ((*self->_cb_ptr) != nullptr) {
 		auto ref_ptr = self->_cb_ptr;
 		try {
@@ -1082,6 +1095,7 @@ void AsyncOnce::SetCallback(std::function<void()> callback)
 void AsyncOnce::InternalCB(CAsyncLoop *loop, CAsyncOnce *once)
 {
 	AsyncOnce *self = (AsyncOnce*)once->user;
+	(void)loop;
 	if ((*self->_cb_ptr) != nullptr) {
 		auto ref_ptr = self->_cb_ptr;
 		try {

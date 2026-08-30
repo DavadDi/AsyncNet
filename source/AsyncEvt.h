@@ -100,7 +100,9 @@ public:
 	// 注：32 位 MinGW（emutls）下底层改用 pthread key 存储以绕开
 	// tls_atexit 析构链的 UAF 缺陷，该平台主线程实例在进程退出时
 	// 不会自动析构（内存由 OS 回收），需要确定销毁的场景请显式管理
-	// loop 生命周期，不要依赖主线程实例的析构
+	// loop 生命周期，不要依赖主线程实例的析构；其余线程（含裸用
+	// CreateThread 创建的）退出时都会正常析构各自的实例，但析构发生
+	// 在加载器锁下，事件收尾回调里不要做加载类阻塞操作
 	static AsyncLoop& GetDefaultLoop();
 
 	// 取得一个假对象，该对象 IsDummy() 接口会返回 true。
